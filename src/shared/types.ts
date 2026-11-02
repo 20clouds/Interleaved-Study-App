@@ -287,7 +287,6 @@ export interface Estimate {
   requests: number
   cached: number
   tokens: number
-  minutes: number
 }
 
 export interface QueueStatus {
@@ -295,13 +294,13 @@ export interface QueueStatus {
   pausedUntil: number | null
   pauseReason: string | null
   running: string | null
+  runningId: string | null // the running job, so the window can cancel it
   queued: number
   failed: { id: string; label: string; error: string; docId?: string | null }[]
   docsTotal: number
   docsDone: number
   chunksTotal: number
   chunksDone: number
-  etaSec: number
   rateLimit: RateLimitInfo | null // set when the provider's rate limit paused everything
   noKey: boolean
 }
@@ -341,7 +340,6 @@ export interface DataSnapshot {
 }
 
 export interface Caps {
-  platform: string
   storeKind: 'sqlite' | 'json'
   storeError: string | null
   safeStorage: boolean

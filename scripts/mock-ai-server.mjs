@@ -17,7 +17,8 @@ function organizeAnswer(prompt) {
     const e = Math.min(to, s + 2)
     const m = prompt.match(new RegExp(`\\[p${s}\\] (.*)`))
     const words = (m ? m[1] : 'material').replace(/[#*]/g, '').split(/\s+/).filter(Boolean).slice(0, 4).join(' ')
-    topics.push({ start: s, end: e, name: `Concept of ${words}`, unit: 'Mock unit', summary: `Covers paragraphs ${s} to ${e}.`, difficulty: 3, terms: ['alpha', 'beta'], prereqs: [], continues: false })
+    const quote = (m ? m[1] : '').split(/\s+/).filter(Boolean).slice(0, 8).join(' ')
+    topics.push({ start: s, end: e, from: quote, name: `Concept of ${words}`, unit: 'Mock unit', summary: `Covers paragraphs ${s} to ${e}.`, difficulty: 3, terms: ['alpha', 'beta'], prereqs: [], continues: false })
   }
   return JSON.stringify({ title: /propose "title"/.test(prompt) ? 'Mock lesson title' : null, topics })
 }

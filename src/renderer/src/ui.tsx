@@ -1,4 +1,4 @@
-// Shared small UI pieces: modal, confirm, toast, status chip, mastery bar, empty state, formatters.
+// Shared small UI pieces: modal, status chip, mastery bar, empty state, formatters.
 import { useEffect, useRef, type ReactNode } from 'react'
 import type { Doc } from '../../shared/types'
 import { useApp } from './state'
@@ -25,17 +25,6 @@ export function Modal({ title, children, footer, onClose, wide }: { title: strin
         {footer && <footer>{footer}</footer>}
       </div>
     </div>
-  )
-}
-
-export function Confirm({ title, body, confirm, danger, onYes, onNo }: { title: string; body: ReactNode; confirm: string; danger?: boolean; onYes: () => void; onNo: () => void }) {
-  return (
-    <Modal title={title} onClose={onNo} footer={<>
-      <button className="btn ghost" onClick={onNo}>Cancel</button>
-      <button className={`btn ${danger ? 'danger' : 'primary'}`} onClick={onYes}>{confirm}</button>
-    </>}>
-      <div>{body}</div>
-    </Modal>
   )
 }
 

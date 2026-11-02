@@ -1,11 +1,12 @@
 // Electron main process: owns the DB, AI queue, API key, timer, tray, notifications and dock.
 import {
-  app, BrowserWindow, Menu, Notification, Tray, dialog, ipcMain, nativeImage, nativeTheme, powerMonitor, safeStorage, shell
+  app, BrowserWindow, Menu, Notification, Tray, dialog, ipcMain, nativeImage, nativeTheme, powerMonitor, safeStorage, screen, shell,
+  systemPreferences, type MenuItemConstructorOptions, type Rectangle
 } from 'electron'
 import fs from 'fs'
 import path from 'path'
 import * as XLSX from 'xlsx'
-import type { Api, ApiEvent } from '../shared/api'
+import type { Api, ApiEvent, MenuCommand } from '../shared/api'
 import { API_METHODS } from '../shared/api'
 import type { Caps, Deadline, DeadlineExtract, DeadlineInput, Doc, ExtractedDeadline, Job, ModelCaps, Provider, Quiz, SheetData, Settings, Topic } from '../shared/types'
 import { DEFAULT_BASE_URLS, baseUrlFor, baseUrlProblem, deepMerge, mergeSettings, providerInfo, PROVIDERS } from '../shared/defaults'
@@ -23,7 +24,7 @@ import { sha256 } from './organize'
 import { MAX_SHEET_MARKDOWN, chunkMarkdown, sheetsToMarkdown } from './deadlines'
 import { INSTALL_HINT, findMarkitdown, markitdownConvert } from './markitdown'
 
-
+const mac = process.platform === 'darwin'
 const EXTERNAL_HOSTS = new Set(['aistudio.google.com', 'platform.claude.com', 'platform.openai.com', 'github.com'])
 const isProvider = (p: unknown): p is Provider => PROVIDERS.some((x) => x.id === p)
 let win: BrowserWindow | null = null
@@ -104,7 +105,7 @@ function alert(a: { title: string; body: string }): void {
       n.show()
     }
   } catch { /* notifications unavailable */ }
-  if (process.platform === 'darwin' && app.dock && !(win && win.isFocused())) {
+  if (mac && app.dock && !(win && win.isFocused())) {
     if (settings.notify.bounce) app.dock.bounce('informational')
     if (settings.notify.badge) app.dock.setBadge('1')
   }
@@ -123,30 +124,71 @@ function createTray(): void {
   }
 }
 
+/** The macOS accent color as #RRGGBB, so primary buttons, selection and focus rings match the rest of the system. */
+function accentColor(): string | null {
+  if (!mac) return null
+  try { return `#${systemPreferences.getAccentColor().slice(0, 6)}` } catch { return null }
+}
+
+/** The last window frame, if it still lands on a connected display. */
+function savedBounds(): (Rectangle & { maximized?: boolean }) | null {
+  const b = store.kvGet<Rectangle & { maximized?: boolean }>('window')
+  if (!b || !(b.width > 0 && b.height > 0)) return null
+  const visible = screen.getAllDisplays().some(({ workArea: a }) =>
+    b.x < a.x + a.width && b.x + b.width > a.x && b.y < a.y + a.height && b.y + b.height > a.y)
+  return visible ? b : null
+}
+
 function createWindow(): void {
   const dark = nativeTheme.shouldUseDarkColors
+  const bounds = savedBounds()
+  const accent = accentColor()
   win = new BrowserWindow({
-    width: 1380,
-    height: 880,
+    width: bounds?.width ?? 1380,
+    height: bounds?.height ?? 880,
+    x: bounds?.x,
+    y: bounds?.y,
     minWidth: 1080,
     minHeight: 640,
     show: false,
     title: 'Interleaved Study',
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 14 },
-    backgroundColor: dark ? '#141C22' : '#E9EDEF',
+    trafficLightPosition: { x: 16, y: 16 },
+    // On macOS the window background is the system sidebar material; the page leaves the title bar and sidebar clear.
+    ...(mac
+      ? { vibrancy: 'sidebar' as const, visualEffectState: 'followWindow' as const, backgroundColor: '#00000000' }
+      : { backgroundColor: dark ? '#141C22' : '#E9EDEF' }),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: false,
-      spellcheck: true
+      spellcheck: true,
+      additionalArguments: accent ? [`--accent=${accent}`] : []
     }
   })
+  if (bounds?.maximized) win.maximize()
   win.once('ready-to-show', () => win?.show())
-  win.on('focus', () => { if (process.platform === 'darwin' && app.dock) app.dock.setBadge('') })
+  win.on('focus', () => { if (mac && app.dock) app.dock.setBadge('') })
+  win.on('close', () => {
+    if (win) store.kvSet('window', { ...win.getNormalBounds(), maximized: win.isMaximized() })
+  })
   win.on('closed', () => { win = null })
+  win.webContents.on('context-menu', (_e, p) => {
+    // Edit fields get the native Cut/Copy/Paste menu with spelling suggestions; selected text gets Copy and Look Up.
+    const w = win
+    if (!w) return
+    const items: MenuItemConstructorOptions[] = p.dictionarySuggestions.map((word) => ({ label: word, click: () => w.webContents.replaceMisspelling(word) }))
+    if (p.misspelledWord) {
+      items.push({ label: 'Learn Spelling', click: () => w.webContents.session.addWordToSpellCheckerDictionary(p.misspelledWord) }, { type: 'separator' })
+    }
+    const text = p.selectionText.trim()
+    if (mac && text) items.push({ label: `Look Up “${text.length > 24 ? `${text.slice(0, 24)}…` : text}”`, click: () => w.webContents.showDefinitionForSelection() }, { type: 'separator' })
+    if (p.isEditable) {
+      items.push({ role: 'cut', enabled: p.editFlags.canCut }, { role: 'copy', enabled: p.editFlags.canCopy }, { role: 'paste', enabled: p.editFlags.canPaste }, { type: 'separator' }, { role: 'selectAll' })
+    } else if (text) items.push({ role: 'copy' })
+    if (items.length) Menu.buildFromTemplate(items).popup({ window: w })
+  })
   win.webContents.setWindowOpenHandler(({ url }) => {
     // Only the provider consoles and docs the app links to open in the browser.
     try {
@@ -164,28 +206,70 @@ function createWindow(): void {
   else void win.loadFile(path.join(__dirname, '../renderer/index.html'))
 }
 
+/** Backup commands run straight from the File menu; the save and open panels are their own feedback. */
+async function backupFromMenu(run: () => Promise<{ ok: boolean; error?: string } | string | null>): Promise<void> {
+  try {
+    const r = await run()
+    if (r && typeof r === 'object' && !r.ok) throw new Error(r.error)
+  } catch (e) {
+    if (win) await dialog.showMessageBox(win, { type: 'warning', message: 'The backup did not finish.', detail: e instanceof Error ? e.message : String(e) })
+  }
+}
+
 function buildMenu(): void {
-  const nav = (view: string): void => { focusWindow(); send('nav', { view }) }
-  const template: Electron.MenuItemConstructorOptions[] = [
-    { role: 'appMenu' },
-    { role: 'fileMenu' },
+  const nav = (view: string, action?: string): void => { focusWindow(); send('nav', { view, action }) }
+  const command = (cmd: MenuCommand): void => { focusWindow(); send('menu', cmd) }
+  const settingsItem: MenuItemConstructorOptions = { label: mac ? 'Settings…' : 'Settings', accelerator: 'CmdOrCtrl+,', click: () => nav('settings') }
+  const template: MenuItemConstructorOptions[] = [
+    ...(mac ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' }, { type: 'separator' }, settingsItem, { type: 'separator' }, { role: 'services' }, { type: 'separator' },
+        { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }
+      ] satisfies MenuItemConstructorOptions[]
+    }] : []),
+    {
+      label: 'File',
+      submenu: [
+        { label: 'Import Lessons…', accelerator: 'CmdOrCtrl+O', click: () => command('import-files') },
+        { label: 'Import Folder…', accelerator: 'CmdOrCtrl+Shift+O', click: () => command('import-folder') },
+        { type: 'separator' },
+        { label: 'Export Backup…', click: () => void backupFromMenu(handlers.exportBackup) },
+        { label: 'Restore from Backup…', click: () => void backupFromMenu(handlers.importBackup) },
+        { type: 'separator' },
+        ...(mac ? [] : [settingsItem, { type: 'separator' as const }]),
+        mac ? { role: 'close' } : { role: 'quit' }
+      ]
+    },
     { role: 'editMenu' },
     {
-      label: 'Study',
+      label: 'View',
       submenu: [
-        { label: 'Start next suggested session', accelerator: 'CmdOrCtrl+Shift+S', click: () => { focusWindow(); send('nav', { view: 'session', action: 'quickstart' }) } },
-        { label: 'Pause or resume timer', accelerator: 'CmdOrCtrl+Shift+P', click: () => { const s = engine.state; if (s?.pausedAt !== null) engine.resume(); else engine.pause() } },
-        { type: 'separator' },
-        { label: 'Board', accelerator: 'CmdOrCtrl+1', click: () => nav('board') },
+        { label: 'Topics', accelerator: 'CmdOrCtrl+1', click: () => nav('board') },
         { label: 'Session', accelerator: 'CmdOrCtrl+2', click: () => nav('session') },
         { label: 'Plan', accelerator: 'CmdOrCtrl+3', click: () => nav('plan') },
         { label: 'Progress', accelerator: 'CmdOrCtrl+4', click: () => nav('progress') },
         { label: 'Queue', accelerator: 'CmdOrCtrl+5', click: () => nav('queue') },
-        { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => nav('settings') }
+        { type: 'separator' },
+        { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+        // Reload and the inspector are developer tools; a shipped Mac app has neither in its View menu.
+        ...(app.isPackaged ? [] : [{ type: 'separator' as const }, { role: 'reload' as const }, { role: 'toggleDevTools' as const }])
       ]
     },
-    { role: 'viewMenu' },
-    { role: 'windowMenu' }
+    {
+      label: 'Study',
+      submenu: [
+        { label: 'Start Next Suggested Session', accelerator: 'CmdOrCtrl+Shift+S', click: () => nav('session', 'quickstart') },
+        { label: 'Pause or Resume Timer', accelerator: 'CmdOrCtrl+Shift+P', click: () => { const s = engine.state; if (s?.pausedAt !== null) engine.resume(); else engine.pause() } }
+      ]
+    },
+    { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [{ label: 'Interleaved Study on GitHub', click: () => void shell.openExternal('https://github.com/Skygamer10/interleaved-study') }]
+    }
   ]
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
@@ -206,13 +290,12 @@ function readSheets(file: string): SheetData['sheets'] {
 
 async function caps(): Promise<Caps> {
   return {
-    platform: process.platform,
     storeKind: store.kind,
     storeError,
     safeStorage: safeStorage.isEncryptionAvailable(),
     notifications: Notification.isSupported(),
     tray: !!tray,
-    dock: process.platform === 'darwin' && !!app.dock,
+    dock: mac && !!app.dock,
     dataPath: app.getPath('userData'),
     markitdown: (await findMarkitdown(settings.tools.markitdown, markitdownDirs()))?.label ?? null
   }
@@ -295,7 +378,7 @@ const handlers: Api = {
   async snapshot() { return repo.dataSnapshot() },
   async topicText(id) {
     const text = repo.topicText(id)
-    return { text, paras: text ? text.split(/\n{2,}/) : [] }
+    return { text, paras: text ? text.split(/\n{2,}/) : [], excerpt: repo.topicExcerpt(id) }
   },
   async search(q) { return store.search(q) },
   async renameTopic(id, name) { repo.renameTopic(id, name); emitData() },
@@ -362,6 +445,17 @@ const handlers: Api = {
     emitData()
   },
   async discardJob(id) { queue.discard(id); emitData() },
+  async cancelAi(target) {
+    const t = target ?? {}
+    const cancelled = queue.cancel((j) => (!t.jobId || j.id === t.jobId) && (!t.kind || j.kind === t.kind) &&
+      (!t.topicId || j.topicId === t.topicId) && (!t.docId || j.docId === t.docId))
+    // Half an organize run is no use: a lesson that lost one window loses the rest and goes back to where it was.
+    const docs = new Set(cancelled.filter((j) => j.kind === 'organize' && j.docId).map((j) => j.docId!))
+    if (docs.size) cancelled.push(...queue.cancel((j) => j.kind === 'organize' && docs.has(j.docId ?? '')))
+    for (const id of docs) repo.cancelOrganize(id)
+    emitData()
+    return cancelled.length
+  },
 
   async quiz(topicId, regenerate) {
     const t = store.get<Topic>('topics', topicId)
@@ -487,6 +581,14 @@ const handlers: Api = {
     send('session', engine.state)
     return { ok: true }
   },
+  async confirm({ message, detail, confirm, danger }) {
+    if (!win) return false
+    // A sheet on the window, like any Mac app; a destructive action is never the Return-key default.
+    const r = await dialog.showMessageBox(win, {
+      type: danger ? 'warning' : 'none', message, detail, buttons: [confirm, 'Cancel'], defaultId: danger ? 1 : 0, cancelId: 1
+    })
+    return r.response === 0
+  },
   async testNotification() { alert({ title: 'Interleaved Study', body: `Notifications work. Sound: ${settings.notify.sound}.` }) },
   async openDataFolder() { await shell.openPath(app.getPath('userData')) }
 }
@@ -564,7 +666,7 @@ app.whenReady().then(async () => {
   await init()
   registerIpc()
   buildMenu()
-  if (process.platform === 'darwin' && app.dock && !app.isPackaged) {
+  if (mac && app.dock && !app.isPackaged) {
     const icon = path.join(app.getAppPath(), 'build', 'icon.png')
     if (fs.existsSync(icon)) app.dock.setIcon(icon)
   }
@@ -581,14 +683,18 @@ app.whenReady().then(async () => {
   powerMonitor.on('resume', () => { engine.tick(); updateTray(); queue.kick() })
   powerMonitor.on('unlock-screen', () => { engine.tick(); updateTray() })
   app.on('activate', () => { if (!win) createWindow(); else focusWindow() })
+  if (mac) {
+    systemPreferences.subscribeNotification('AppleColorPreferencesChangedNotification', () => send('accent', accentColor()))
+  }
 })
 
 app.on('window-all-closed', () => {
   // Keep running on macOS so the menu bar timer and alerts continue; quit elsewhere.
-  if (process.platform !== 'darwin') app.quit()
+  if (!mac) app.quit()
 })
 
-app.on('before-quit', () => {
+// will-quit runs after every window's close handler, so the saved window frame reaches the store.
+app.on('will-quit', () => {
   if (ticker) clearInterval(ticker)
   ticker = null
   try { store?.flush(); store?.close() } catch { /* closing */ }

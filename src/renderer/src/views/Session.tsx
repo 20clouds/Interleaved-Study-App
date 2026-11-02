@@ -4,9 +4,9 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Pool, Rating, Suggestion } from '../../../shared/types'
 import { RATINGS } from '../../../shared/sched'
 import { api } from '../api'
-import { courseClass, useAction, useApp } from '../state'
+import { courseClass, useAction, useApp, useConfirmAction } from '../state'
 import { Icon } from '../icons'
-import { Confirm, Deck, Empty, deckName, fmtClock, fmtMin, Spinner } from '../ui'
+import { Deck, Empty, deckName, fmtClock, fmtMin, Spinner } from '../ui'
 import { QuizPanel } from '../components/Quiz'
 import { useCountdown } from '../components/Ribbon'
 
@@ -179,10 +179,10 @@ function StartPanel() {
 export function SessionView() {
   const { session, topics, docs, courses, pending, setPending, data } = useApp()
   const act = useAction()
+  const ask = useConfirmAction()
   const left = useCountdown()
   const [quiz, setQuiz] = useState(false)
   const [others, setOthers] = useState<Suggestion[] | null>(null)
-  const [confirmEnd, setConfirmEnd] = useState(false)
 
   useEffect(() => { setQuiz(false); setOthers(null) }, [session?.topicId, session?.phase])
   useEffect(() => {
@@ -308,10 +308,11 @@ export function SessionView() {
             </div>
           )}
         </div>
-        {session.phase !== 'done' && <button className="btn ghost danger" onClick={() => setConfirmEnd(true)}><Icon.stop /> End session</button>}
+        {session.phase !== 'done' && <button className="btn ghost danger" onClick={() => void ask({
+          message: 'End this session?', confirm: 'End Session',
+          detail: `Time already spent on the current topic is recorded without a rating.${session.sandbox ? ' You can then save the sandbox to your schedule or discard it.' : ''}`
+        }, () => api.sessionEnd())}><Icon.stop /> End session</button>}
       </aside>
-      {confirmEnd && <Confirm title="End this session?" confirm="End session" body={<p>Time already spent on the current topic is recorded without a rating.{session.sandbox ? ' You can then save the sandbox to your schedule or discard it.' : ''}</p>}
-        onNo={() => setConfirmEnd(false)} onYes={() => { setConfirmEnd(false); void act(() => api.sessionEnd()) }} />}
     </div>
   )
 }

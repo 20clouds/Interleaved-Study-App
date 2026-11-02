@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { prepare } from '../src/main/preprocess'
-import { ambiguousPairs, cacheKey, finalizeWindows, normalizeWindow, windowCacheContent } from '../src/main/organize'
+import { ambiguousPairs, cacheKey, finalizeWindows, normalizeWindow, topicExcerpts, windowCacheContent } from '../src/main/organize'
+import type { Para } from '../src/shared/types'
 import { extractJson, InvalidJson } from '../src/main/ai/json'
 
 const paras = prepare(Array.from({ length: 20 }, (_, i) => `Paragraph ${i + 1} explains osmosis and diffusion across the membrane in detail number ${i}. ${'More words here. '.repeat(10)}`).join('\n\n')).paras
@@ -76,5 +77,48 @@ describe('cache keys', () => {
     const c2 = windowCacheContent({ outline: 'o', paras, from: 1, to: 6, first: true })
     expect(cacheKey('organize', c, 'm', false)).not.toBe(cacheKey('organize', c2, 'm', false))
     expect(cacheKey('quiz', c, 'm', false)).not.toBe(cacheKey('organize', c, 'm', false))
+  })
+})
+
+describe('topic excerpts', () => {
+  const ps: Para[] = [
+    { id: 1, text: 'Intro to equilibrium. Reactions go both ways.', words: 7 },
+    { id: 2, text: 'More on rates. Now, the principle of microscopic reversibility says every step reverses.', words: 13 },
+    { id: 3, text: 'Reversibility arrows are drawn as double harpoons.', words: 7 },
+    { id: 4, text: 'Le Chatelier: a system shifts to undo a change.', words: 9 }
+  ]
+  const fold = (s: string): string => s.replace(/\s+/g, ' ').trim()
+
+  it('cuts at the quoted opening words, even partway through the paragraph before', () => {
+    const ex = topicExcerpts(ps, [
+      { start: 1, end: 2, from: 'Intro to equilibrium. Reactions go' },
+      { start: 3, end: 3, from: 'now the principle of microscopic reversibility' }, // case and punctuation differ
+      { start: 4, end: 4, from: 'Le Chatelier: a system shifts' }
+    ])
+    expect(ex).toEqual([
+      'Intro to equilibrium. Reactions go both ways.\n\nMore on rates.',
+      'Now, the principle of microscopic reversibility says every step reverses.\n\nReversibility arrows are drawn as double harpoons.',
+      'Le Chatelier: a system shifts to undo a change.'
+    ])
+    expect(fold(ex.join(' '))).toBe(fold(ps.map((p) => p.text).join(' ')))
+  })
+
+  it('falls back to the paragraph edge when the quote is missing, far away or reworded', () => {
+    const ex = topicExcerpts(ps, [
+      { start: 1, end: 2, from: '' },
+      { start: 3, end: 3, from: 'Intro to equilibrium. Reactions go' }, // only in paragraph 1: too far back
+      { start: 4, end: 4, from: 'Completely different words that are not there' }
+    ])
+    expect(ex).toEqual([ps[0].text + '\n\n' + ps[1].text, ps[2].text, ps[3].text])
+  })
+
+  it('keeps a heading or list marker in front of the quoted words', () => {
+    const md: Para[] = [{ id: 1, text: 'Intro words here today.', words: 4 }, { id: 2, text: '## Reaction quotient basics', words: 3, heading: { level: 2, text: 'Reaction quotient basics' } }, { id: 3, text: 'Q compares the current mix.', words: 5 }]
+    expect(topicExcerpts(md, [{ start: 1, end: 1, from: 'Intro words' }, { start: 2, end: 3, from: 'Reaction quotient basics' }])[1]).toBe('## Reaction quotient basics\n\nQ compares the current mix.')
+  })
+
+  it('accepts a quote whose tail the model tidied, by its first words', () => {
+    const ex = topicExcerpts(ps, [{ start: 1, end: 2, from: 'x' }, { start: 3, end: 4, from: 'Now, the principle of microscopic reversibility states that' }])
+    expect(ex[1].startsWith('Now, the principle')).toBe(true)
   })
 })

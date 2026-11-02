@@ -7,9 +7,9 @@ import type { Course, Doc, Topic } from '../../../shared/types'
 import { mastery, status, type Status } from '../../../shared/sched'
 import { DAY } from '../../../shared/util'
 import { api } from '../api'
-import { courseClass, useAction, useApp, type ScopeSel } from '../state'
+import { courseClass, useAction, useApp, useConfirmAction, type ScopeSel } from '../state'
 import { Icon } from '../icons'
-import { Confirm, Deck, Empty, MasteryBar, Modal, StatusChip, deckName, fmtMin, fmtRel } from '../ui'
+import { Deck, Empty, MasteryBar, Modal, StatusChip, deckName, fmtMin, fmtRel } from '../ui'
 import { importFlow, importTarget } from '../components/ImportFlow'
 import { CustomizePanel, GroupMenu, Pop } from '../components/BoardCustomize'
 import { NewCourse } from '../components/NewCourse'
@@ -277,6 +277,7 @@ function posAt(e: DragEvent<HTMLElement>, ps: Pos[], axis: 'x' | 'y' = 'y'): Pos
 export function Board() {
   const { data, scope, setScope, selected, setSelected, courses, docs, now, toast, setView, courseWizard, setCourseWizard } = useApp()
   const act = useAction()
+  const ask = useConfirmAction()
   const derived = useDerived()
   const { layout, update, reset } = useBoardLayout(data?.courses ?? [], data?.docs ?? [])
   const groups = useMemo(() => groupsOf(layout), [layout])
@@ -292,7 +293,6 @@ export function Board() {
   const [fresh, setFresh] = useState<string | null>(null)
   const [drag, setDrag] = useState<DragSrc | null>(null)
   const [over, setOver] = useState<{ id: string; pos: Pos } | null>(null)
-  const [confirm, setConfirm] = useState<{ title: string; body: ReactNode; label: string; danger?: boolean; run: () => Promise<void> } | null>(null)
   const [created, setCreated] = useState<{ id: string; color: string | null; section: string | null } | null>(null)
 
   // The course being looked at (course, lesson, unit or lesson-folder scope); none means the course folders.
@@ -384,24 +384,22 @@ export function Board() {
   const sel = [...checked].filter((id) => data.topics.some((t) => t.id === id))
   const setPrefs = (p: Partial<Prefs>): void => update((l) => { l.prefs = { ...l.prefs, ...p } })
 
-  const confirmDeleteDoc = (d: Doc): void => setConfirm({
-    title: `Delete "${d.title}"?`, label: 'Delete lesson', danger: true,
-    body: <p>This removes the lesson, its topics and their study history. Export a backup first if unsure.</p>,
-    run: async () => { await api.deleteDoc(d.id) }
-  })
-  const confirmDeleteCourse = (c: Course): void => setConfirm({
-    title: `Delete course "${c.name}"?`, label: 'Delete course', danger: true,
-    body: <p>This removes every lesson and topic in the course, with their history.</p>,
-    run: async () => { await api.deleteCourse(c.id) }
-  })
+  const confirmDeleteDoc = (d: Doc): void => void ask({
+    message: `Delete "${d.title}"?`, confirm: 'Delete Lesson', danger: true,
+    detail: 'This removes the lesson, its topics and their study history. Export a backup first if unsure.'
+  }, async () => { await api.deleteDoc(d.id) })
+  const confirmDeleteCourse = (c: Course): void => void ask({
+    message: `Delete course "${c.name}"?`, confirm: 'Delete Course', danger: true,
+    detail: 'This removes every lesson and topic in the course, with their history.'
+  }, async () => { await api.deleteCourse(c.id) })
   const reorganize = async (d: Doc): Promise<void> => {
     const n = await api.historyCount(d.id)
     const run = async (): Promise<void> => { await api.reorganize(d.id); toast('Re-organizing with AI. History carries over to matching topics.') }
     if (n > 0) {
-      setConfirm({
-        title: `Re-organize "${d.title}"?`, label: 'Re-organize',
-        body: <p>{n} topic(s) in this lesson have study history. The AI will rebuild the topic list; history moves to new topics whose name or text still matches, and unmatched topics start fresh.</p>, run
-      })
+      await ask({
+        message: `Re-organize "${d.title}"?`, confirm: 'Re-organize',
+        detail: `${n} topic(s) in this lesson have study history. The AI will rebuild the topic list; history moves to new topics whose name or text still matches, and unmatched topics start fresh.`
+      }, run)
     } else await act(run)
   }
 
@@ -753,13 +751,13 @@ export function Board() {
     </Pop>
   )
 
-  const boardCls = `board d-${prefs.density}${prefs.tree ? '' : ' no-tree'}${prefs.inspector ? '' : ' no-insp'}${prefs.tint ? ' tint' : ''}${drag ? ' is-dragging' : ''}`
+  const boardCls = `board d-${prefs.density}${prefs.tree ? '' : ' no-tree'}${prefs.inspector ? '' : ' no-insp'}${prefs.tint ? ' tint' : ''}`
   return (
     <div className={boardCls} style={vars({ '--hs': prefs.headings, '--t': `${prefs.topicSize}px`, '--cols': tmpl(false), '--cols-n': tmpl(true) })}>
       {prefs.tree && <ScopeTree derived={derived} layout={layout} groups={groups} />}
       <section className="pane list" aria-label="Topics">
         <div className="toolbar">
-          <div className="search"><Icon.search /><input className="input" placeholder="Search topics, terms and text" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search" /></div>
+          <div className="search"><Icon.search /><input className="input" placeholder="Search topics, terms and text" spellCheck={false} value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search" /></div>
           <select className="input" value={fStatus} onChange={(e) => setFStatus(e.target.value as typeof fStatus)} aria-label="Status filter">
             <option value="all">Any status</option><option value="new">New</option><option value="progress">In progress</option><option value="review">Needs review</option><option value="solid">Solid</option>
           </select>
@@ -767,15 +765,13 @@ export function Board() {
             <option value="any">Any due date</option><option value="overdue">Overdue</option><option value="today">Due by tonight</option><option value="week">Due within 7 days</option>
           </select>
           <div style={{ flex: 1 }} />
-          {sel.length >= 2 && <button className="btn" onClick={() => setConfirm({
-            title: `Merge ${sel.length} topics?`, label: 'Merge',
-            body: <p>The text is joined in lesson order. The study history of the most-reviewed topic is kept; time spent is added up.</p>,
-            run: async () => { const id = await api.mergeTopics(sel); setChecked(new Set()); setSelected(id) }
-          })}><Icon.merge /> Merge {sel.length}</button>}
-          {sel.length >= 1 && <button className="btn danger" onClick={() => setConfirm({
-            title: `Delete ${sel.length} topic(s)?`, label: 'Delete', danger: true, body: <p>Their study history is removed too.</p>,
-            run: async () => { await api.deleteTopics(sel); setChecked(new Set()) }
-          })}><Icon.trash /> Delete</button>}
+          {sel.length >= 2 && <button className="btn" onClick={() => void ask({
+            message: `Merge ${sel.length} topics?`, confirm: 'Merge',
+            detail: 'The text is joined in lesson order. The study history of the most-reviewed topic is kept; time spent is added up.'
+          }, async () => { const id = await api.mergeTopics(sel); setChecked(new Set()); setSelected(id) })}><Icon.merge /> Merge {sel.length}</button>}
+          {sel.length >= 1 && <button className="btn danger" onClick={() => void ask({
+            message: `Delete ${sel.length} topic(s)?`, confirm: 'Delete', danger: true, detail: 'Their study history is removed too.'
+          }, async () => { await api.deleteTopics(sel); setChecked(new Set()) })}><Icon.trash /> Delete</button>}
           <CustomizePanel layout={layout} setPrefs={setPrefs} onNewSection={newSection} onReset={() => { reset(); toast('Layout reset') }} />
           <button className="btn" onClick={() => setAdding(true)}><Icon.plus /> Add topic</button>
           {scopeCourse ? upload(scopeCourse)
@@ -805,8 +801,6 @@ export function Board() {
       {prefs.inspector && <Inspector key={selected ?? 'none'} docsMap={docs} />}
       {adding && <AddTopic onClose={() => setAdding(false)} />}
       {wizard}
-      {confirm && <Confirm title={confirm.title} body={confirm.body} confirm={confirm.label} danger={confirm.danger}
-        onNo={() => setConfirm(null)} onYes={() => { const c = confirm; setConfirm(null); void act(c.run) }} />}
     </div>
   )
 }

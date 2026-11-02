@@ -330,11 +330,12 @@ describe('Gemini structured output', () => {
   it('loads caps saved before structured output existed, then learns it', async () => {
     reset()
     const e = env('gemini')
-    const old = { model: 'gemma-4-31b-it', api: 'generateContent', system: true, json: true, thinkMinimal: true, fallback: null, testedAt: 1 }
-    e.store.kvSet('modelCaps', { 'gemma-4-31b-it': old })
+    const model = e.settings.ai.model
+    const old = { model, api: 'generateContent', system: true, json: true, thinkMinimal: true, fallback: null, testedAt: 1 }
+    e.store.kvSet('modelCaps', { [model]: old })
     expect((await organizeOne(e)).status).toBe('organized')
     expect(bodies()[0].generationConfig.responseJsonSchema).toEqual(ORGANIZE_SCHEMA)
-    expect(e.store.kvGet<Record<string, ModelCaps>>('modelCaps')!['gemma-4-31b-it']).toEqual({ ...old, schema: true, schemaFails: 0, thinkLevel: 'minimal' })
+    expect(e.store.kvGet<Record<string, ModelCaps>>('modelCaps')![model]).toEqual({ ...old, schema: true, schemaFails: 0, thinkLevel: 'minimal' })
   })
 
   it('Test model reports structured output as not accepted when the probe schema is rejected, and remembers it', async () => {

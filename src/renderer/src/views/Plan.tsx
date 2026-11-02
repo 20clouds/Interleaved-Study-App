@@ -7,9 +7,9 @@ import { deadlineKey, guessMapping, mapRows, type ColumnMapping, type DateFormat
 import { computeStreak } from '../../../shared/streak'
 import { addDays, dayKey, daysBetween, parseDayKey } from '../../../shared/util'
 import { api, errMsg } from '../api'
-import { useAction, useApp } from '../state'
+import { useAction, useApp, useConfirmAction } from '../state'
 import { Icon } from '../icons'
-import { Confirm, Deck, Modal, Spinner, fmtMin } from '../ui'
+import { Deck, Modal, Spinner, fmtMin } from '../ui'
 import { Calendar } from '../components/Calendar'
 
 function colName(i: number): string {
@@ -118,11 +118,16 @@ function AiSheetImport({ sheet, onManual, onClose }: { sheet: SheetData; onManua
     if (r) onClose()
   }
   const noKey = !!error && /API key/i.test(error)
+  // Leaving while the AI is still reading the sheet cancels that request instead of letting it run on unseen.
+  const leave = (then: () => void) => (): void => {
+    if (!res && !error) void api.cancelAi({ kind: 'deadlines' }).catch(() => undefined)
+    then()
+  }
   return (
-    <Modal title="Import deadlines" wide onClose={onClose} footer={<>
+    <Modal title="Import deadlines" wide onClose={leave(onClose)} footer={<>
       {res && <span className="muted" style={{ marginRight: 'auto' }}>{res.items.length} found{res.dropped ? `, ${res.dropped} skipped without a usable date` : ''}</span>}
-      <button className="btn ghost" style={res ? undefined : { marginRight: 'auto' }} onClick={onManual}>Map columns manually</button>
-      <button className="btn ghost" onClick={onClose}>Cancel</button>
+      <button className="btn ghost" style={res ? undefined : { marginRight: 'auto' }} onClick={leave(onManual)}>Map columns manually</button>
+      <button className="btn ghost" onClick={leave(onClose)}>Cancel</button>
       <button className="btn primary" disabled={!chosen.length} onClick={() => void doImport()}>Import {chosen.length} deadline{chosen.length === 1 ? '' : 's'}</button>
     </>}>
       <div className="muted small">{sheet.path}</div>
@@ -223,11 +228,11 @@ function countdown(date: string): string {
 export function Plan() {
   const { data, settings, saveSettings, courses, docs } = useApp()
   const act = useAction()
+  const ask = useConfirmAction()
   const [sheet, setSheet] = useState<SheetData | null>(null)
   const [manual, setManual] = useState(false)
   const [form, setForm] = useState<Deadline | 'new' | null>(null)
   const [newDate, setNewDate] = useState<string | undefined>(undefined) // set when adding from a calendar day
-  const [del, setDel] = useState<Deadline | null>(null)
   const [showPast, setShowPast] = useState(false)
   if (!data || !settings) return null
   const today = dayKey()
@@ -287,7 +292,9 @@ export function Plan() {
                     <div className={`num small ${daysBetween(today, d.date) <= 7 && d.date >= today ? 'overdue' : 'muted'}`}>{countdown(d.date)}</div>
                     <div className="row-flex" style={{ gap: 0 }}>
                       <button className="btn ghost icon" aria-label="Edit" onClick={() => setForm(d)}><Icon.edit /></button>
-                      <button className="btn ghost icon" aria-label="Delete" onClick={() => setDel(d)}><Icon.trash /></button>
+                      <button className="btn ghost icon" aria-label="Delete" onClick={() => void ask({
+                        message: `Delete "${d.title}"?`, confirm: 'Delete', danger: true, detail: 'The deadline is removed; topics are not affected.'
+                      }, () => api.deleteDeadline(d.id))}><Icon.trash /></button>
                     </div>
                   </div>
                 ))}
@@ -304,7 +311,6 @@ export function Plan() {
         ? <SheetImport sheet={sheet} onClose={() => setSheet(null)} />
         : <AiSheetImport sheet={sheet} onManual={() => setManual(true)} onClose={() => setSheet(null)} />)}
       {form && <DeadlineForm initial={form === 'new' ? undefined : form} defaultDate={newDate} onClose={() => setForm(null)} />}
-      {del && <Confirm title={`Delete "${del.title}"?`} danger confirm="Delete" body={<p>The deadline is removed; topics are not affected.</p>} onNo={() => setDel(null)} onYes={() => { const d = del; setDel(null); void act(() => api.deleteDeadline(d.id)) }} />}
     </div>
   )
 }

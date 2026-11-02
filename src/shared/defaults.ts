@@ -16,15 +16,16 @@ export const PROVIDERS: ProviderInfo[] = [
 
 export const providerInfo = (p: Provider): ProviderInfo => PROVIDERS.find((x) => x.id === p) ?? PROVIDERS[0]
 
-/** Preset model IDs per provider; the first one is the default when switching to that provider. */
+/**
+ * Preset model IDs per provider; the first one is the default when switching to that provider. Gemini's default is
+ * the Flash-Lite model: it accepts minimal thinking and answers an organize window in about 2 s, where Gemma takes
+ * about 10 s and Gemini 3.8 Flash (no minimal thinking, often overloaded with HTTP 503) far longer.
+ */
 export const MODEL_PRESETS: Record<Provider, string[]> = {
-  gemini: ['gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'],
+  gemini: ['gemini-3.5-flash-lite', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-3.8-flash', 'gemini-flash-latest'],
   anthropic: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'],
   openai: ['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra', 'gpt-5.6-terra', 'gpt-5.6-luna']
 }
-
-/** Rough request duration before any were measured; used only for time estimates. */
-export const DEFAULT_REQUEST_MS = 8000
 
 export const DEFAULT_BASE_URLS: Record<Provider, string> = {
   gemini: 'https://generativelanguage.googleapis.com',
@@ -37,7 +38,7 @@ export const SOUNDS = ['Glass', 'Ping', 'Basso', 'Blow', 'Bottle', 'Frog', 'Funk
 export const DEFAULT_SETTINGS: Settings = {
   ai: {
     provider: 'gemini',
-    model: 'gemma-4-31b-it',
+    model: 'gemini-3.5-flash-lite',
     lastModels: {},
     endpoint: 'auto',
     baseUrls: { ...DEFAULT_BASE_URLS },

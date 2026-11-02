@@ -7,10 +7,9 @@ import type {
 } from '../shared/types'
 import { applyReview, markSolid, mastery, resetSched, setDue, status, type ReviewInput } from '../shared/sched'
 import { addTime, clamp, courseCode, dayKey, suggestedMinutes, wordCount } from '../shared/util'
-import { DEFAULT_REQUEST_MS } from '../shared/defaults'
 import type { Store } from './store/types'
 import { buildWindows, estTokens, firstSentenceName, provisionalTopics, safeName, sliceText } from './preprocess'
-import { ORGANIZE_SYSTEM, ambiguousPairs, cacheKey, finalizeWindows, windowCacheContent, type WinResult } from './organize'
+import { ORGANIZE_SYSTEM, ambiguousPairs, cacheKey, finalizeWindows, topicExcerpts, windowCacheContent, type WinResult } from './organize'
 import { carryHistory, hasHistory, matchTopics } from './history'
 
 export const uid = (): string => crypto.randomUUID()
@@ -123,6 +122,16 @@ export class Repo {
     return this.store.getText(`topic:${id}`) ?? ''
   }
 
+  /** The topic's verbatim section of the lesson as the AI cut it, or null when there is none. */
+  topicExcerpt(id: string): string | null {
+    return this.store.getText(`excerpt:${id}`) ?? null
+  }
+
+  setExcerpt(id: string, excerpt: string | null | undefined): void {
+    if (excerpt) this.store.putText(`excerpt:${id}`, excerpt)
+    else this.store.delText(`excerpt:${id}`)
+  }
+
   saveTopic(t: Topic, text?: string): void {
     this.store.put('topics', t)
     if (text !== undefined) this.store.putText(`topic:${t.id}`, text)
@@ -133,6 +142,7 @@ export class Repo {
   deleteTopic(id: string): void {
     this.store.del('topics', id)
     this.store.delText(`topic:${id}`)
+    this.store.delText(`excerpt:${id}`)
     this.store.del('quizzes', id)
     this.store.unindex(id)
   }
@@ -163,7 +173,7 @@ export class Repo {
    * Replace a lesson's topics, carrying history over to new topics that match old ones by name or text.
    * Returns how many were carried and how many old topics with history could not be matched.
    */
-  replaceDocTopics(docId: string, items: { topic: Topic; text: string }[]): { carried: number; dropped: number } {
+  replaceDocTopics(docId: string, items: { topic: Topic; text: string; excerpt?: string | null }[]): { carried: number; dropped: number } {
     const olds = this.store.byParent<Topic>('topics', docId)
     const oldItems = olds.map((o) => ({ id: o.id, name: o.name, text: this.topicText(o.id) }))
     const match = matchTopics(oldItems, items.map((i) => ({ id: i.topic.id, name: i.topic.name, text: i.text })))
@@ -183,6 +193,7 @@ export class Repo {
           t.id = o.id // keep the id so deadlines and quizzes stay linked
         }
         this.saveTopic(t, it.text)
+        this.setExcerpt(t.id, it.excerpt)
       }
     })
     const dropped = olds.filter((o) => !usedOld.has(o.id) && hasHistory(o)).length
@@ -210,6 +221,7 @@ export class Repo {
     const base = [...ts].sort((a, b) => (b.reviews.length - a.reviews.length) || (b.spent - a.spent) || (a.ord - b.ord))[0]
     const ordered = [...ts].sort((a, b) => (a.docId === b.docId ? a.ord - b.ord : a.docId.localeCompare(b.docId)))
     const text = ordered.map((t) => this.topicText(t.id)).filter(Boolean).join('\n\n')
+    const excerpts = ordered.map((t) => this.topicExcerpt(t.id))
     const sameDoc = ts.every((t) => t.docId === base.docId)
     const words = wordCount(text)
     const merged: Topic = {
@@ -231,6 +243,7 @@ export class Repo {
       for (const t of ts) if (t.id !== base.id) this.deleteTopic(t.id)
       this.store.del('quizzes', base.id)
       this.saveTopic(merged, text)
+      this.setExcerpt(base.id, excerpts.every(Boolean) ? excerpts.join('\n\n') : null)
       this.renumber(base.docId)
     })
     return base.id
@@ -256,6 +269,7 @@ export class Repo {
     })
     this.store.tx(() => {
       this.store.del('quizzes', t.id)
+      this.setExcerpt(t.id, null) // the AI's cut no longer fits either half; their text is shown instead
       this.saveTopic(a, aText)
       this.saveTopic(b, bText)
       this.renumber(t.docId)
@@ -405,9 +419,18 @@ export class Repo {
         tokens += this.windowCost(w.prep, win.tokens) + s.ai.maxOutputTokens
       }
     }
-    // One request at a time, so time is requests × the measured average request time.
-    const minutes = (requests * (this.store.kvGet<number>('avgRequestMs') ?? DEFAULT_REQUEST_MS)) / 60000
-    return { docs: docs.length, requests, cached, tokens, minutes: Math.round(minutes * 10) / 10 }
+    return { docs: docs.length, requests, cached, tokens }
+  }
+
+  /** Organizing was cancelled: partial window results go; the lesson keeps the topics it had and can be organized again. */
+  cancelOrganize(docId: string): void {
+    const doc = this.store.get<Doc>('docs', docId)
+    if (!doc) return
+    this.store.tx(() => {
+      for (const w of this.store.byParent<{ id: string }>('wins', docId)) this.store.del('wins', w.id)
+      const organized = this.store.byParent<Topic>('topics', docId).some((t) => !t.provisional)
+      this.store.put('docs', { ...doc, status: organized ? 'organized' : 'awaiting', winsDone: 0, error: null, updatedAt: this.now() })
+    })
   }
 
   /** All windows of a lesson are done: build final topics (with history carry-over) and queue ambiguous merges. */
@@ -419,13 +442,15 @@ export class Repo {
     const final = finalizeWindows(wins.map((w) => w.result), prep.paras, doc.title)
     const pace = this.settings().study.pace
     const title = !doc.titleLocked ? wins[0]?.result.title : null
+    const excerpts = topicExcerpts(prep.paras, final)
     const items = final.map((f, i) => ({
       topic: this.newTopic({
         docId, courseId: doc.courseId, name: f.name, unit: f.unit, ord: i, start: f.start, end: f.end, words: f.words,
         minutes: suggestedMinutes(f.words, f.difficulty, pace), summary: f.summary, terms: f.terms, prereqs: f.prereqs,
         difficulty: f.difficulty, provisional: false
       }),
-      text: sliceText(prep.paras, f.start, f.end)
+      text: sliceText(prep.paras, f.start, f.end),
+      excerpt: excerpts[i] || null
     }))
     const res = this.replaceDocTopics(docId, items)
     this.store.tx(() => {

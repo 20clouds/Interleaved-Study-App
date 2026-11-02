@@ -1,4 +1,4 @@
-// AI queue: estimate before a run, live progress, pause/resume (including after a provider rate limit), failures with retry.
+// AI queue: what a run costs, live progress, pause/resume (including after a provider rate limit), cancel, failures with retry.
 import { useEffect, useState } from 'react'
 import type { Estimate } from '../../../shared/types'
 import { api } from '../api'
@@ -41,7 +41,7 @@ export function QueueView() {
           <h2>Waiting to be organized</h2>
           {awaiting.length === 0 ? <p className="muted">Every lesson is organized or in the queue.</p> : (
             <>
-              <p>{awaiting.length} lesson{awaiting.length === 1 ? '' : 's'} not organized yet{est ? `: about ${est.requests} requests, ${est.tokens.toLocaleString()} tokens, about ${Math.max(1, Math.ceil(est.minutes))} minutes${est.cached ? ` (${est.cached} windows cached)` : ''}` : ''}.</p>
+              <p>{awaiting.length} lesson{awaiting.length === 1 ? '' : 's'} not organized yet{est ? `: about ${est.requests} requests, ${est.tokens.toLocaleString()} tokens${est.cached ? ` (${est.cached} windows cached)` : ''}` : ''}.</p>
               <button className="btn primary" disabled={s.noKey} onClick={() => void act(() => api.startQueue(), 'Organizing started')}><Icon.sparkle /> Start organizing</button>
             </>
           )}
@@ -52,13 +52,18 @@ export function QueueView() {
             {s.userPaused
               ? <button className="btn" onClick={() => void act(() => api.resumeQueue())}><Icon.play /> {s.rateLimit ? 'Continue' : 'Resume'}</button>
               : <button className="btn" onClick={() => void act(() => api.pauseQueue())}><Icon.pause /> Pause</button>}
+            {s.queued > 0 && <button className="btn" onClick={() => void act(() => api.cancelAi(), 'AI requests cancelled')}><Icon.close /> Cancel all</button>}
           </div>
           <div className="statline">
             <div className="stat"><b className="num">{s.docsDone}/{s.docsTotal}</b><span>lessons done</span></div>
             <div className="stat"><b className="num">{s.chunksDone}/{s.chunksTotal}</b><span>windows done</span></div>
           </div>
-          {s.running && <p className="row-flex"><Spinner /> {s.running}</p>}
-          <p className="help">One request at a time, as fast as the provider allows. If its rate limit is reached, everything pauses and you get a notification; Continue picks up exactly where it stopped. If the app closes mid-run, the queue resumes on the next launch.</p>
+          {s.running && (
+            <p className="row-flex"><Spinner /> <span style={{ flex: 1 }}>{s.running}</span>
+              {s.runningId && <button className="btn small" onClick={() => void act(() => api.cancelAi({ jobId: s.runningId! }), 'Request cancelled')}><Icon.close /> Cancel</button>}
+            </p>
+          )}
+          <p className="help">One request at a time, as fast as the provider allows. Cancel stops the request in flight at once; a lesson whose organizing is cancelled keeps the topics it had, and windows that already finished stay cached for next time. If the provider's rate limit is reached, everything pauses and you get a notification; Continue picks up exactly where it stopped. If the app closes mid-run, the queue resumes on the next launch.</p>
         </div>
         {s.failed.length > 0 && (
           <div className="block">

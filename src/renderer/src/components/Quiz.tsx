@@ -1,8 +1,9 @@
 // On-demand quiz for one topic (built from that topic's text only, cached). Multiple choice is scored
-// locally; short answers are self-marked against the key, or graded by the AI on request.
-import { useEffect, useState } from 'react'
+// locally; short answers are self-marked against the key, or graded by the AI on request. Either AI request can be
+// cancelled, and closing the quiz cancels one still running.
+import { useEffect, useRef, useState } from 'react'
 import type { Grade, Quiz as QuizT } from '../../../shared/types'
-import { api, errMsg } from '../api'
+import { api, errMsg, isCancelled } from '../api'
 import { Icon } from '../icons'
 import { Spinner } from '../ui'
 
@@ -15,15 +16,32 @@ export function QuizPanel({ topicId, onScore, scoreLabel = 'Use this score' }: {
   const [marks, setMarks] = useState<Record<number, boolean>>({})
   const [grades, setGrades] = useState<Record<number, Grade>>({})
   const [grading, setGrading] = useState(false)
+  const seq = useRef(0) // only the latest load may set state: an earlier, cancelled one settles late
 
   const load = (regenerate = false): void => {
+    const n = ++seq.current
     setLoading(true); setError(null); setChecked(false); setAnswers({}); setMarks({}); setGrades({})
-    api.quiz(topicId, regenerate).then(setQuiz).catch((e) => setError(errMsg(e))).finally(() => setLoading(false))
+    api.quiz(topicId, regenerate).then(
+      (q) => { if (seq.current === n) setQuiz(q) },
+      (e) => { if (seq.current === n) setError(isCancelled(e) ? 'Quiz cancelled.' : errMsg(e)) }
+    ).finally(() => { if (seq.current === n) setLoading(false) })
   }
-  useEffect(() => load(false), [topicId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    load(false)
+    // Closing the quiz while it is still being written stops the request.
+    return () => { seq.current++; void api.cancelAi({ kind: 'quiz', topicId }) }
+  }, [topicId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (loading) return <div className="row-flex muted"><Spinner /> Preparing a quiz from this topic’s text (cached after the first time)…</div>
-  if (error || !quiz) return <div><p className="err-text">{error ?? 'No quiz available.'}</p><button className="btn" onClick={() => load(false)}><Icon.refresh /> Try again</button></div>
+  const cancel = (kind: 'quiz' | 'grade'): void => { void api.cancelAi({ kind, topicId }).catch(() => undefined) }
+
+  if (loading) {
+    return (
+      <div className="row-flex muted"><Spinner /> Preparing a quiz from this topic’s text (cached after the first time)…
+        <button className="btn small" onClick={() => cancel('quiz')}><Icon.close /> Cancel</button>
+      </div>
+    )
+  }
+  if (error || !quiz) return <div><p className={error === 'Quiz cancelled.' ? 'muted' : 'err-text'}>{error ?? 'No quiz available.'}</p><button className="btn" onClick={() => load(false)}><Icon.refresh /> Try again</button></div>
 
   const qs = quiz.questions
   const shortIdx = qs.map((q, i) => (q.type === 'short' ? i : -1)).filter((i) => i >= 0)
@@ -38,7 +56,7 @@ export function QuizPanel({ topicId, onScore, scoreLabel = 'Use this score' }: {
       const g: Record<number, Grade> = {}
       shortIdx.forEach((i, k) => (g[i] = res[k]))
       setGrades(g)
-    } catch (e) { setError(errMsg(e)) } finally { setGrading(false) }
+    } catch (e) { if (!isCancelled(e)) setError(errMsg(e)) } finally { setGrading(false) }
   }
 
   return (
@@ -74,6 +92,7 @@ export function QuizPanel({ topicId, onScore, scoreLabel = 'Use this score' }: {
       <div className="row-flex" style={{ marginTop: 10 }}>
         {!checked && <button className="btn primary" onClick={() => setChecked(true)}>Check answers</button>}
         {checked && shortIdx.length > 0 && !allMarked && <button className="btn" disabled={grading} onClick={() => void gradeAi()}>{grading ? <Spinner /> : <Icon.sparkle />} Grade short answers with AI</button>}
+        {grading && <button className="btn ghost small" onClick={() => cancel('grade')}><Icon.close /> Cancel</button>}
         {checked && allMarked && <span className="num">Score {correct}/{qs.length} ({Math.round(score * 100)}%)</span>}
         {checked && allMarked && <button className="btn primary" onClick={() => onScore(score)}>{scoreLabel}</button>}
         <span style={{ flex: 1 }} />

@@ -44,10 +44,6 @@ export function daysBetween(a: string, b: string): number {
   return Math.round((parseDayKey(b).getTime() - parseDayKey(a).getTime()) / DAY)
 }
 
-export function fmtDays(d: number): string {
-  return `${Math.abs(d).toFixed(1)} day${Math.abs(d) >= 0.95 && Math.abs(d) < 1.05 ? '' : 's'}`
-}
-
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v))
 }

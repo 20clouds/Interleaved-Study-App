@@ -220,7 +220,7 @@ describe('AI queue with the mock server', () => {
     q.start()
     await q.idle()
     expect(env.store.get<Doc>('docs', doc.id)!.status).toBe('organized')
-    const caps = env.store.kvGet<Record<string, ModelCaps>>('modelCaps')!['gemma-4-31b-it']
+    const caps = env.store.kvGet<Record<string, ModelCaps>>('modelCaps')![env.settings.ai.model]
     expect(caps).toMatchObject({ json: false, thinkMinimal: false, system: true })
   })
 
@@ -329,5 +329,59 @@ describe('re-import with history carry-over', () => {
     expect(carried?.name).toBe(topics[1].name)
     expect(carried?.id).toBe(topics[1].id)
     expect(now.some((t) => /vesicles/i.test(t.name))).toBe(true)
+  })
+
+  it('stores each organized topic\'s verbatim excerpt, cut at the quoted words', async () => {
+    reset()
+    const env = setup()
+    const doc = await importOne(env, 6)
+    env.repo.enqueueOrganize(doc.id)
+    const q = makeQueue(env)
+    q.start()
+    await q.idle()
+    const topics = env.store.byParent<Topic>('topics', doc.id).sort((a, b) => a.ord - b.ord)
+    expect(topics.length).toBeGreaterThan(1)
+    for (const t of topics) {
+      const ex = env.repo.topicExcerpt(t.id)
+      expect(ex).toBeTruthy()
+      // The mock quotes each topic's first paragraph from its start, so the cut lands on the paragraph edge.
+      expect(env.repo.topicText(t.id).startsWith(ex!.slice(0, 40))).toBe(true)
+    }
+  })
+})
+
+describe('cancelling AI requests', () => {
+  it('aborts the request in flight at once, rejects the waiter and drops the job for good', async () => {
+    reset()
+    mock.state.script = [{ stall: true }] // headers, then a body that never finishes
+    const env = setup()
+    const doc = await importOne(env, 2)
+    const topic = env.store.byParent<Topic>('topics', doc.id)[0]
+    const q = makeQueue(env)
+    const job = env.repo.createJob({ kind: 'quiz', docId: doc.id, topicId: topic.id, label: 'Quiz', payload: {}, estTokens: 100 })
+    const pending = q.enqueue(job, true) as Promise<Quiz>
+    pending.catch(() => undefined)
+    while (!mock.state.requests.length) await new Promise((r) => setTimeout(r, 5))
+    expect(q.status().runningId).toBe(job.id)
+    const t0 = Date.now()
+    expect(q.cancel((j) => j.kind === 'quiz').map((j) => j.id)).toEqual([job.id])
+    await expect(pending).rejects.toThrow('Cancelled')
+    await q.idle()
+    expect(Date.now() - t0).toBeLessThan(2000)
+    expect(env.store.get('jobs', job.id)).toBeUndefined()
+    expect(q.status()).toMatchObject({ running: null, runningId: null, queued: 0, failed: [] })
+    expect(mock.state.requests).toHaveLength(1) // not retried
+  })
+
+  it('cancels queued jobs that never started', async () => {
+    reset()
+    const env = setup()
+    const doc = await importOne(env, 6)
+    env.repo.enqueueOrganize(doc.id)
+    const q = makeQueue(env)
+    q.pause()
+    expect(q.cancel().length).toBeGreaterThan(0)
+    expect(env.store.all<Job>('jobs')).toHaveLength(0)
+    expect(mock.state.requests).toHaveLength(0)
   })
 })

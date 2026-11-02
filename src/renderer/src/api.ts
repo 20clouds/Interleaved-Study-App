@@ -11,3 +11,6 @@ export function errMsg(e: unknown): string {
   const m = e instanceof Error ? e.message : String(e)
   return m.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 }
+
+/** The AI request was cancelled (by the person, or because the window that wanted it went away). */
+export const isCancelled = (e: unknown): boolean => errMsg(e) === 'Cancelled'

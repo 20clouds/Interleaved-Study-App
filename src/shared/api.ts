@@ -1,5 +1,5 @@
 import type {
-  Bootstrap, Caps, DataSnapshot, DeadlineExtract, DeadlineInput, Deadline, DayGoal, Estimate, Grade, ImportResult,
+  Bootstrap, Caps, DataSnapshot, DeadlineExtract, DeadlineInput, Deadline, DayGoal, Estimate, Grade, ImportResult, JobKind,
   OverrideAction, Pool, Provider, QueueStatus, Quiz, Rating, SessionState, Settings, SheetData, Suggestion, TestResult
 } from './types'
 
@@ -15,7 +15,8 @@ export interface Api {
   capsCheck(): Promise<Caps>
 
   snapshot(): Promise<DataSnapshot>
-  topicText(id: string): Promise<{ text: string; paras: string[] }>
+  /** excerpt: the AI's exact cut of the lesson for this topic (null for topics organized before excerpts existed). */
+  topicText(id: string): Promise<{ text: string; paras: string[]; excerpt: string | null }>
   search(q: string): Promise<string[]>
   renameTopic(id: string, name: string): Promise<void>
   updateTopic(id: string, patch: { notes?: string; unit?: string; minutes?: number }): Promise<void>
@@ -45,6 +46,8 @@ export interface Api {
   queueStatus(): Promise<QueueStatus>
   retryJob(id: string): Promise<void>
   discardJob(id: string): Promise<void>
+  /** Cancel queued or running AI work matching every field given (all of it when none is). Returns how many jobs. */
+  cancelAi(target?: { jobId?: string; kind?: JobKind; topicId?: string; docId?: string }): Promise<number>
 
   quiz(topicId: string, regenerate?: boolean): Promise<Quiz>
   grade(topicId: string, items: { q: string; key: string; answer: string }[]): Promise<Grade[]>
@@ -76,9 +79,13 @@ export interface Api {
   importBackup(): Promise<{ ok: boolean; error?: string } | null>
   testNotification(): Promise<void>
   openDataFolder(): Promise<void>
+  /** Ask in a native sheet on the window; true when the person chose `confirm`. */
+  confirm(o: { message: string; detail?: string; confirm: string; danger?: boolean }): Promise<boolean>
 }
 
-export type ApiEvent = 'data' | 'queue' | 'session' | 'nav'
+export type ApiEvent = 'data' | 'queue' | 'session' | 'nav' | 'menu' | 'accent'
+/** File menu commands that the page carries out. */
+export type MenuCommand = 'import-files' | 'import-folder'
 
 export const API_METHODS: (keyof Api)[] = [
   'bootstrap', 'setSettings', 'setKey', 'clearKey', 'testModel', 'capsCheck',
@@ -86,17 +93,19 @@ export const API_METHODS: (keyof Api)[] = [
   'deleteTopics', 'override', 'reviewTopic', 'createCourse', 'renameCourse', 'deleteCourse', 'renameDoc', 'deleteDoc',
   'historyCount', 'reorganize', 'retryDoc',
   'pickPaths', 'importPaths',
-  'estimate', 'startQueue', 'pauseQueue', 'resumeQueue', 'queueStatus', 'retryJob', 'discardJob',
+  'estimate', 'startQueue', 'pauseQueue', 'resumeQueue', 'queueStatus', 'retryJob', 'discardJob', 'cancelAi',
   'quiz', 'grade',
   'sessionState', 'sessionPreview', 'sessionStart', 'sessionPause', 'sessionResume', 'sessionExtend',
   'sessionSkip', 'sessionEndEarly', 'sessionRate', 'sessionAccept', 'sessionSkipBreak', 'sessionSkipSuggestion', 'sessionEnd', 'sessionSandbox',
   'addDeadline', 'updateDeadline', 'deleteDeadline', 'openSheet', 'extractDeadlines', 'importDeadlines', 'setDayGoal',
-  'exportBackup', 'importBackup', 'testNotification', 'openDataFolder'
+  'exportBackup', 'importBackup', 'testNotification', 'openDataFolder', 'confirm'
 ]
 
 export interface Bridge extends Api {
   on(event: ApiEvent, cb: (payload: unknown) => void): () => void
   pathForFile(file: File): string
+  /** The system accent color when the window opened (#RRGGBB); later changes arrive as the 'accent' event. */
+  accent: string | null
 }
 
 export type { DeepPartial }
