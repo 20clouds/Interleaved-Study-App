@@ -4,7 +4,7 @@
 // refusal fallback) are probed and remembered per model: on HTTP 400 the offending feature is dropped and the
 // request retried without it.
 import Anthropic from '@anthropic-ai/sdk'
-import type { Endpoint, ModelCaps, Provider, WireApi } from '../../shared/types'
+import type { Endpoint, ModelCaps, Provider, ThinkingLevel, WireApi } from '../../shared/types'
 import { parseRetryAfter } from '../backoff'
 import type { JsonSchema } from './schema'
 
@@ -36,6 +36,7 @@ export interface CallOpts {
   maxOutput: number
   json: boolean
   thinkMinimal: boolean
+  level?: ThinkingLevel // Gemini: the level to ask for when thinkMinimal is on (default minimal); others ignore it
   schema?: JsonSchema // Gemini structured output; the other providers ignore it
   signal?: AbortSignal // aborts the request at once with CancelledError
 }
@@ -76,15 +77,16 @@ export function isAuthError(e: HttpError): boolean {
   return e.status === 400 && /api[ _-]?key|authenticat|credential/i.test(e.body)
 }
 
-// think: minimal thinking (Gemini) / low effort (Claude, OpenAI). low: Gemini thinking level low, when minimal is
-// rejected. room: Gemini thinking headroom (off when the model's output limit is too small for it).
-interface Use { sys: boolean; json: boolean; think: boolean; low: boolean; fallback: boolean; schema: boolean; room: boolean }
+// think: minimal thinking (Gemini) / low effort (Claude, OpenAI). low: Gemini thinking level low, chosen or when
+// minimal is rejected. deep: Gemini level medium or high, as chosen. room: Gemini thinking headroom (off when the
+// model's output limit is too small for it).
+interface Use { sys: boolean; json: boolean; think: boolean; low: boolean; deep: 'medium' | 'high' | null; fallback: boolean; schema: boolean; room: boolean }
 
 // Reasoning models count thinking tokens toward the output cap, so leave room for them on top of the answer.
 const THINK_HEADROOM_LOW = 4096
 const THINK_HEADROOM_DEFAULT = 12000
 
-const geminiLevel = (use: Use): 'minimal' | 'low' | null => (use.think ? 'minimal' : use.low ? 'low' : null)
+const geminiLevel = (use: Use): ThinkingLevel | null => use.deep ?? (use.think ? 'minimal' : use.low ? 'low' : null)
 
 // Gemini counts thinking toward maxOutputTokens too: minimal needs no room, low some, the model's default level more.
 function geminiMaxOutput(o: CallOpts, use: Use): number {
@@ -377,12 +379,15 @@ export async function generate(cfg: ProviderCfg, o: CallOpts, caps: ModelCaps): 
   const jsonMode = cfg.provider !== 'anthropic'
   const gemini = cfg.provider === 'gemini'
   const json = jsonMode && o.json && caps.json !== false
-  const think = o.thinkMinimal && caps.thinkMinimal !== false
+  // Gemini sends the chosen level; minimal steps down to low when the model rejects it, as before.
+  const pick = gemini && o.thinkMinimal ? o.level ?? 'minimal' : null
+  const think = o.thinkMinimal && caps.thinkMinimal !== false && (!gemini || pick === 'minimal')
   const use: Use = {
     sys: caps.system !== false,
     json,
     think,
-    low: gemini && o.thinkMinimal && !think && caps.thinkLevel !== 'none',
+    low: gemini && (pick === 'minimal' || pick === 'low') && !think && caps.thinkLevel !== 'none',
+    deep: pick === 'medium' || pick === 'high' ? pick : null,
     fallback: cfg.provider === 'anthropic' && claudeSupportsFallback(o.model) && caps.fallback !== false,
     // Structured output rides on JSON mode, so it is never sent without it.
     schema: json && gemini && !!o.schema && caps.schema !== false && geminiSupportsSchema(o.model),
@@ -398,7 +403,7 @@ export async function generate(cfg: ProviderCfg, o: CallOpts, caps: ModelCaps): 
       if (!jsonMode && caps.json !== false) { caps.json = false; changed = true }
       if (use.think && caps.thinkMinimal !== true) { caps.thinkMinimal = true; changed = true }
       const level = gemini ? geminiLevel(use) : null
-      if (level && caps.thinkLevel !== level) { caps.thinkLevel = level; changed = true }
+      if ((level === 'minimal' || level === 'low') && caps.thinkLevel !== level) { caps.thinkLevel = level; changed = true }
       if (use.fallback && caps.fallback !== true) { caps.fallback = true; changed = true }
       if (use.schema && (caps.schema !== true || caps.schemaFails)) { caps.schema = true; caps.schemaFails = 0; changed = true }
       return { result, caps, changed }
@@ -437,6 +442,10 @@ export async function generate(cfg: ProviderCfg, o: CallOpts, caps: ModelCaps): 
       if (names(OUTPUT_NAMES)) {
         if (geminiMaxOutput(o, use) > o.maxOutput) { use.room = false; caps.room = false; changed = true; continue }
         throw e
+      }
+      // A chosen medium or high level the model rejects: this request goes at the model's own level instead.
+      if (use.deep && (names(THINK_NAMES) || !names(['mime', 'json', 'response_format', 'system', 'instructions']))) {
+        use.deep = null; continue
       }
       if ((use.think || use.low) && (names(THINK_NAMES) || !names(['mime', 'json', 'response_format', 'system', 'instructions']))) {
         if (use.think) { use.think = false; caps.thinkMinimal = false; use.low = gemini && caps.thinkLevel !== 'none' } else { use.low = false; caps.thinkLevel = 'none' }

@@ -12,6 +12,7 @@
   --hover: rgba(23, 35, 43, 0.045);
   --select: color-mix(in srgb, var(--tide) 14%, transparent);
   --fill: #7F929C;
+  --sheet: #FFFFFF; /* a page of the student's own file, one step above the panel */
   --track: #DCE2E5;
   --shadow: 0 8px 28px rgba(23, 35, 43, 0.16);
   --c-l: 0.62;
@@ -33,6 +34,7 @@
   --madder: #E0705D;
   --hover: rgba(221, 228, 232, 0.05);
   --fill: #8A9AA4;
+  --sheet: #222E36;
   --track: #24313A;
   --shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
   --seg: rgba(221, 228, 232, 0.08);
@@ -299,8 +301,11 @@ input[type='radio'], input[type='checkbox'] { accent-color: var(--tide); }
 .facts dt { color: var(--muted); } .facts dd { margin: 0; font-variant-numeric: tabular-nums; }
 .section-rule { border-top: 1px solid var(--rule); padding-top: 12px; }
 .textview { font-family: var(--serif); font-size: 14.5px; line-height: 1.6; white-space: pre-wrap; user-select: text; cursor: text; }
-.textview.source { max-height: 280px; overflow: auto; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--fill); }
-.textview.source.open { max-height: none; }
+/* The excerpt reads as a passage quoted from the lesson: the file's own page, edged in its course's hue like a topic row. */
+.source { position: relative; border-radius: 6px; background: var(--sheet); }
+.source::before { content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: var(--c); }
+.source > .textview { max-height: calc(12lh + 10px); overflow: auto; padding: 10px 14px 10px 17px; color: var(--ink); } /* top padding + 12 whole lines */
+.source.open > .textview { max-height: none; }
 .split-para { display: grid; grid-template-columns: 22px 1fr; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--rule); }
 
 /* ---------- generic page ---------- */

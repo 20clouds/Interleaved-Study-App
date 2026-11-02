@@ -5,7 +5,7 @@ import type { Doc, Rating } from '../../../shared/types'
 import { RATINGS, mastery, status, why } from '../../../shared/sched'
 import { DAY, localDateTime, type PushUnit } from '../../../shared/util'
 import { api } from '../api'
-import { useAction, useApp, useConfirmAction } from '../state'
+import { courseClass, useAction, useApp, useConfirmAction } from '../state'
 import { Icon } from '../icons'
 import { MasteryBar, Modal, StatusChip, deckName, fmtDate, fmtDateTime, fmtMin, Spinner } from '../ui'
 import { QuizPanel } from '../components/Quiz'
@@ -80,7 +80,9 @@ export function Inspector({ docsMap }: { docsMap: Map<string, Doc> }) {
         {d && <div className="muted small" style={{ marginBottom: 6 }}>{deckName(d)}{t.start != null && t.end != null ? `, paragraphs ${t.start}–${t.end}` : ''}</div>}
         {!src ? <Spinner /> : splitAt === null ? (
           <>
-            <div className={`textview source sel${srcOpen ? ' open' : ''}`}>{src.excerpt ?? (src.paras.join('\n\n') || 'No stored text.')}</div>
+            <div className={`source ${courseClass(c)}${srcOpen ? ' open' : ''}`}>
+              <div className="textview sel">{src.excerpt ?? (src.paras.join('\n\n') || 'No stored text.')}</div>
+            </div>
             {!src.excerpt && !t.provisional && !t.manual && src.paras.length > 0 && (
               <div className="help">This is the topic’s paragraphs. The AI’s exact cut is stored for lessons organized from now on; re-organize this lesson to see it here.</div>
             )}

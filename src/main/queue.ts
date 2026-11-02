@@ -4,7 +4,7 @@
 // Any queued or running job can be cancelled; the request in flight is aborted at once.
 // Also: JSON-mode fallback, one repair retry, result cache.
 import type { Job, ModelCaps, QueueStatus, RateLimitInfo, Settings } from '../shared/types'
-import { baseUrlFor, providerInfo } from '../shared/defaults'
+import { baseUrlFor, geminiLevelFor, providerInfo } from '../shared/defaults'
 import type { Store } from './store/types'
 import { MAX_ATTEMPTS, MAX_RETRY_AFTER_MS, backoffMs } from './backoff'
 import { BlockedError, CancelledError, HttpError, NetworkError, defaultCaps, generate, isAuthError, normalizeCaps } from './ai/provider'
@@ -317,10 +317,15 @@ export class Queue {
     if (!key) throw new AuthError('Add your API key in Settings to organize lessons.')
     if (this.userPaused) throw new PausedSignal('paused')
     const caps = this.caps(s.model)
+    // Gemini always gets its chosen thinking level; the minimal-thinking switch is for Claude and OpenAI.
+    const gemini = s.provider === 'gemini'
     try {
       const { result, caps: newCaps, changed } = await generate(
         { provider: s.provider, baseUrl: baseUrlFor(s), key, endpoint: s.endpoint },
-        { model: s.model, system, prompt, maxOutput, json: true, thinkMinimal: thinkMinimal && s.minimalThinking, schema, signal },
+        {
+          model: s.model, system, prompt, maxOutput, json: true, schema, signal,
+          thinkMinimal: thinkMinimal && (gemini || s.minimalThinking), level: gemini ? geminiLevelFor(s) : undefined
+        },
         caps
       )
       if (changed) this.saveCaps(newCaps)

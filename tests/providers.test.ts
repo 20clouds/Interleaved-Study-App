@@ -8,7 +8,7 @@ import { type CallOpts, HttpError, NetworkError, claudeSupportsFallback, default
 import { MAX_RESET_HINT_MS, MAX_RETRY_AFTER_MS, backoffMs, parseRetryAfter } from '../src/main/backoff'
 import type { JsonSchema } from '../src/main/ai/schema'
 import { GRADE_SCHEMA, ORGANIZE_SCHEMA } from '../src/main/organize'
-import { DEFAULT_BASE_URLS, MODEL_PRESETS, baseUrlFor, mergeSettings } from '../src/shared/defaults'
+import { DEFAULT_BASE_URLS, MODEL_PRESETS, baseUrlFor, geminiLevelFor, geminiThinking, mergeSettings } from '../src/shared/defaults'
 import type { Doc, Grade, Job, ModelCaps, Provider, Topic } from '../src/shared/types'
 import { setup, writeLesson } from './helpers'
 
@@ -63,9 +63,34 @@ describe('settings for multiple providers', () => {
   })
 
   it('drops the old client-side rate limit settings', () => {
-    const s = mergeSettings({ ai: { rpm: 15, tpm: 1000, rpd: 50, utilization: 0.5, countInputOnly: true, model: 'gemma-4-31b-it' } })
+    const s = mergeSettings({ ai: { rpm: 15, tpm: 1000, rpd: 50, utilization: 0.5, countInputOnly: true, model: 'gemma-4-31b-it', defaultsRev: 2 } })
     for (const k of ['rpm', 'tpm', 'rpd', 'utilization', 'countInputOnly']) expect(k in s.ai).toBe(false)
     expect(s.ai.model).toBe('gemma-4-31b-it')
+  })
+
+  it('moves settings saved before Flash-Lite became the default to it once, then keeps the choice', () => {
+    const old = mergeSettings({ ai: { provider: 'gemini', model: 'gemini-3.8-flash', lastModels: { gemini: 'gemini-3.8-flash' } } })
+    expect(old.ai).toMatchObject({ model: 'gemini-3.5-flash-lite', lastModels: { gemini: 'gemini-3.5-flash-lite' }, defaultsRev: 2 })
+    expect(mergeSettings(old).ai.model).toBe('gemini-3.5-flash-lite')
+    expect(mergeSettings({ ai: { provider: 'gemini', model: 'gemini-3.8-flash', defaultsRev: 2 } }).ai.model).toBe('gemini-3.8-flash')
+    // Another provider keeps its model; switching back to Gemini later lands on Flash-Lite.
+    const claude = mergeSettings({ ai: { provider: 'anthropic', model: 'claude-haiku-5-5', lastModels: { gemini: 'gemma-4-31b-it' } } })
+    expect(claude.ai.model).toBe('claude-haiku-5-5')
+    expect(claude.ai.lastModels.gemini).toBe('gemini-3.5-flash-lite')
+  })
+
+  it('offers each Gemini model only the thinking levels it accepts, fastest first', () => {
+    expect(geminiThinking('gemini-3.5-flash-lite')).toEqual({ levels: ['minimal', 'low', 'medium', 'high'], dflt: 'minimal', known: true })
+    expect(geminiThinking('gemini-3.8-flash').levels).toEqual(['low', 'medium', 'high'])
+    expect(geminiThinking('gemma-4-26b-a4b-it').levels).toEqual(['minimal', 'high'])
+    expect(geminiThinking('gemini-9-future').known).toBe(false)
+    expect(geminiThinking('__proto__').known).toBe(false)
+    const ai = { model: 'gemini-3.8-flash', thinking: {} }
+    expect(geminiLevelFor(ai)).toBe('low') // nothing chosen: the fastest it accepts
+    expect(geminiLevelFor({ ...ai, thinking: { 'gemini-3.8-flash': 'high' } })).toBe('high')
+    expect(geminiLevelFor({ ...ai, thinking: { 'gemini-3.8-flash': 'minimal' } })).toBe('low') // not accepted
+    expect(geminiLevelFor({ model: 'gemma-4-31b-it', thinking: { 'gemma-4-31b-it': 'medium' } })).toBe('minimal')
+    expect(geminiLevelFor({ model: 'gemini-9-future', thinking: { 'gemini-9-future': 'medium' } })).toBe('medium')
   })
 
   it('falls back to the official endpoint when a base URL is blank', () => {
@@ -529,3 +554,36 @@ describe('request hardening', () => {
     expect(q.caps('__proto__')).toMatchObject({ model: '__proto__', json: true, schema: true })
   })
 })
+
+describe('Gemini thinking level', () => {
+  const bodies = (): Record<string, any>[] => mock.state.requests.map((r) => r.body) // eslint-disable-line @typescript-eslint/no-explicit-any
+
+  it('sends the level chosen for the model, with thinking headroom on the output cap', async () => {
+    reset()
+    const e = env('gemini')
+    e.settings.ai.thinking = { [e.settings.ai.model]: 'high' }
+    expect((await organizeOne(e)).status).toBe('organized')
+    expect(bodies()[0].generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'high' })
+    expect(bodies()[0].generationConfig.maxOutputTokens).toBe(e.settings.ai.maxOutputTokens + 12000)
+  })
+
+  it('sends minimal when nothing is chosen for Flash-Lite', async () => {
+    reset()
+    const e = env('gemini')
+    expect((await organizeOne(e)).status).toBe('organized')
+    expect(bodies()[0].generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'minimal' })
+  })
+
+  it('retries a rejected medium or high level at the model default and does not record it as the cheapest level', async () => {
+    reset()
+    mock.state.rejectThinking = true
+    const e = env('gemini')
+    const model = e.settings.ai.model
+    e.settings.ai.thinking = { [model]: 'medium' }
+    expect((await organizeOne(e)).status).toBe('organized')
+    expect(bodies()[0].generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'medium' })
+    expect(bodies()[1].generationConfig.thinkingConfig).toBeUndefined()
+    expect(e.store.kvGet<Record<string, ModelCaps>>('modelCaps')?.[model]?.thinkLevel).not.toBe('medium')
+  })
+})
+

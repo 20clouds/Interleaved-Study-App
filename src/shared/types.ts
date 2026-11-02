@@ -157,6 +157,9 @@ export type Endpoint = 'auto' | 'generateContent' | 'interactions'
 
 export type Provider = 'gemini' | 'anthropic' | 'openai'
 
+/** A Gemini thinking level. Gemma 4 takes only two: minimal turns thinking off, high turns it on. */
+export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high'
+
 /** Wire API a model is called through: two for Gemini, one each for Claude and OpenAI. */
 export type WireApi = 'generateContent' | 'interactions' | 'messages' | 'responses'
 
@@ -170,7 +173,9 @@ export interface Settings {
     includeModelInCacheKey: boolean
     windowTokens: number
     maxOutputTokens: number
-    minimalThinking: boolean
+    minimalThinking: boolean // Claude and OpenAI; Gemini uses `thinking`
+    thinking: Partial<Record<string, ThinkingLevel>> // Gemini: the level chosen per model (absent: its fastest)
+    defaultsRev: number // which one-time settings migrations have run
   }
   study: { minutes: number; useSuggested: boolean; pace: number }
   pomo: {

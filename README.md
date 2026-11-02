@@ -71,6 +71,7 @@ Built with Electron, React, TypeScript and SQLite.
 - The number of requests and tokens before every run, live progress, pause/resume, and retry for failed jobs. There are no time estimates.
 - **Cancel any AI request:** a Cancel button in the title bar (everything), on the Queue page (the running request, or all), while a quiz is being written or graded, and while a spreadsheet is being read. The request in flight is aborted at once. A lesson whose organizing is cancelled keeps the topics it had, and finished windows stay cached for next time.
 - "Test model" checks whether a model supports system instructions, JSON mode and minimal thinking (low effort on Claude and OpenAI), and remembers the result for that model. For Claude it also checks the server-side refusal fallback.
+- **Gemini thinking level:** a **Thinking** menu in Settings lists only the levels the selected Gemini model accepts (from Google's thinking docs, confirmed on each preset) and remembers your choice for each model. Gemma 4 shows Off and On, its only two settings. See [Gemini thinking levels](#gemini-thinking-levels).
 
 ---
 
@@ -141,6 +142,19 @@ A Claude.ai Pro/Max plan or a ChatGPT Plus/Pro plan does **not** include API acc
 
 - **Claude** is called through the official [`@anthropic-ai/sdk`](https://www.npmjs.com/package/@anthropic-ai/sdk) (Messages API). Requests ask for low effort to save tokens. On `claude-opus-5-5`, `claude-sonnet-5-5` and `claude-fable-5-1`, the app also turns on Anthropic's server-side refusal fallback, so a request one model declines is retried on another Claude model instead of failing. For organizing many lessons, `claude-haiku-5-5` costs much less than the default Opus model.
 - **OpenAI** is called through the Responses API with JSON mode and low reasoning effort. Requests are sent with `store: false`, so OpenAI keeps no copy of the conversation.
+
+### Gemini thinking levels
+
+More thinking gives the model longer to reason before it answers: slower, and more output tokens. Settings → **Thinking** lists only what the selected model accepts and starts at its fastest level.
+
+| Model | Levels it accepts | Its own default |
+|---|---|---|
+| `gemini-3.5-flash-lite` | minimal, low, medium, high | minimal |
+| `gemini-3.8-flash` | low, medium, high | medium |
+| `gemini-flash-latest` | low, medium, high (it rejects minimal, like 3.8 Flash) | not stated |
+| `gemma-4-31b-it`, `gemma-4-26b-a4b-it` | minimal (thinking off), high (thinking on) | not stated |
+
+Sources: [Gemini thinking docs](https://ai.google.dev/gemini-api/docs/thinking), [Run Gemma with the Gemini API](https://ai.google.dev/gemma/docs/core/gemma_on_gemini_api), and a probe of each level on each preset (November 2026). On one organize window of a lecture transcript, Flash-Lite took about 2-4 s at minimal, low or medium and 8.8 s at high. A model that isn't in the table is offered every level; a level it rejects is skipped for that request.
 
 ### When you hit a rate limit
 

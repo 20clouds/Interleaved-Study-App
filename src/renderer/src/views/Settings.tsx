@@ -1,8 +1,8 @@
 // Settings: API key (Keychain), model + Test model with capability probing, limits, study and Pomodoro,
 // notifications, appearance, backup, and a capability check.
 import { useEffect, useState } from 'react'
-import type { Caps, Provider, TestResult } from '../../../shared/types'
-import { DEFAULT_BASE_URLS, MODEL_PRESETS, PROVIDERS, SOUNDS, providerInfo } from '../../../shared/defaults'
+import type { Caps, Provider, TestResult, ThinkingLevel } from '../../../shared/types'
+import { DEFAULT_BASE_URLS, MODEL_PRESETS, PROVIDERS, SOUNDS, geminiLevelFor, geminiThinking, providerInfo } from '../../../shared/defaults'
 import { api, errMsg } from '../api'
 import { useAction, useApp } from '../state'
 import { Icon } from '../icons'
@@ -59,6 +59,15 @@ function BaseUrlField({ value, fallback, onSave }: { value: string; fallback: st
 
 const THINK_LABEL: Record<Provider, string> = { gemini: 'Minimal thinking', anthropic: 'Low effort', openai: 'Low reasoning effort' }
 
+const LEVEL_NAME: Record<ThinkingLevel, string> = { minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High' }
+
+/** A Gemini thinking level as the dropdown names it. Gemma's two levels are its off and on switch. */
+function levelLabel(model: string, l: ThinkingLevel, levels: ThinkingLevel[], dflt: ThinkingLevel | null): string {
+  if (/^gemma-4/i.test(model)) return l === 'minimal' ? 'Off' : 'On'
+  const name = LEVEL_NAME[l] + (l === levels[0] ? ', fastest' : l === levels[levels.length - 1] ? ', slowest' : '')
+  return l === dflt ? `${name} (model default)` : name
+}
+
 export function SettingsView() {
   const { settings, saveSettings, boot, refreshBoot, toast } = useApp()
   const act = useAction()
@@ -75,6 +84,8 @@ export function SettingsView() {
   const info = providerInfo(ai.provider)
   const presets = MODEL_PRESETS[ai.provider]
   const thinkLabel = THINK_LABEL[ai.provider]
+  const gt = geminiThinking(ai.model)
+  const level = geminiLevelFor(ai)
   const mc = boot.modelCaps[ai.model]
   const yn = (v: boolean | null | undefined): string => (v === true ? 'yes' : v === false ? 'no' : 'not tested')
 
@@ -169,8 +180,24 @@ export function SettingsView() {
                 </select>
               </label>
             )}
-            <label className="check" style={{ alignSelf: 'end' }}><input type="checkbox" checked={ai.minimalThinking} onChange={(e) => void saveSettings({ ai: { minimalThinking: e.target.checked } })} /><span>Ask for {thinkLabel.toLowerCase()} (fewer output tokens; dropped automatically if the model refuses it)</span></label>
+            {ai.provider === 'gemini' ? (
+              <label className="field"><span>Thinking</span>
+                <select className="input" value={level} onChange={(e) => void saveSettings({ ai: { thinking: { [ai.model]: e.target.value as ThinkingLevel } } })}>
+                  {gt.levels.map((l) => <option key={l} value={l}>{levelLabel(ai.model, l, gt.levels, gt.dflt)}</option>)}
+                </select>
+              </label>
+            ) : (
+              <label className="check" style={{ alignSelf: 'end' }}><input type="checkbox" checked={ai.minimalThinking} onChange={(e) => void saveSettings({ ai: { minimalThinking: e.target.checked } })} /><span>Ask for {thinkLabel.toLowerCase()} (fewer output tokens; dropped automatically if the model refuses it)</span></label>
+            )}
           </div>
+          {ai.provider === 'gemini' && (
+            <p className="help">
+              {/^gemma-4/i.test(ai.model)
+                ? 'Gemma can only turn thinking off or on. Off answers sooner. '
+                : 'More thinking gives the model longer to reason before it answers, so each request is slower and uses more output tokens. '}
+              {gt.known ? `Only the levels ${ai.model} accepts are listed, saved for this model.` : 'This model isn’t in Google’s list, so every level is offered; one it rejects is skipped for that request.'}
+            </p>
+          )}
           <BaseUrlField key={ai.provider} value={ai.baseUrls[ai.provider] ?? ''} fallback={DEFAULT_BASE_URLS[ai.provider]} onSave={async (v) => (await act(async () => { await saveSettings({ ai: { baseUrls: { [ai.provider]: v } } }); return true })) === true} />
         </section>
 
