@@ -94,8 +94,8 @@ Built with Electron, React, TypeScript and SQLite.
 
 ```bash
 # 1. Clone
-git clone https://github.com/Skygamer10/interleaved-study.git
-cd interleaved-study
+git clone https://github.com/20clouds/Interleaved-Study-App.git
+cd Interleaved-Study-App
 
 # 2. Install dependencies
 #    (postinstall rebuilds better-sqlite3 for Electron's Node version automatically)
@@ -353,7 +353,7 @@ Generated folders, which are git-ignored: `node_modules/`, `out/` (compiled app)
 - **Storage.** SQLite through `better-sqlite3`, with WAL and FTS5. Raw document text is kept in its own table, so list queries never load it. If the native module can't load, the app falls back to a JSON-file store and shows the reason in Settings.
 - **Scheduling.** Each rating maps to an evidence value (lost 0.1, shaky 0.4, okay 0.7, solid 1.0). A quiz score is weighted twice as heavily as the self-rating. Stability grows or shrinks from that evidence, and the next due date follows from the new stability. Mastery and status are computed when read, not stored.
 - **Providers.** `src/main/ai/provider.ts` has one adapter per wire API: Gemini `generateContent` and Interactions (raw `fetch`), Claude Messages (the official Anthropic SDK, with its built-in retries off because the queue handles retries), and OpenAI Responses (raw `fetch`). Every adapter returns the same result shape, so the queue, cache and rate-limit pause work the same for all three.
-- **AI fallbacks.** Some models reject certain request features. If a request gets HTTP 400, the app retries without the feature the error names, in this order: Claude's refusal fallback, then minimal thinking / low effort, then JSON mode, then the system instruction. It remembers what each model accepted. Claude has no schema-free JSON mode, so the prompts ask for JSON and every reply goes through robust parsing with one repair retry.
+- **AI fallbacks.** Some models reject certain request features. If a request gets HTTP 400, the app retries without the feature the error names, in this order: Claude's refusal fallback, then the thinking setting (a chosen Gemini medium or high level goes at the model's own level; minimal steps down to low, then to none; Claude and OpenAI drop low effort), then JSON mode, then the system instruction. It remembers what each model accepted. Claude has no schema-free JSON mode, so the prompts ask for JSON and every reply goes through robust parsing with one repair retry.
 - **Rate limits.** An HTTP 429 from any provider throws a dedicated error. The queue puts the job back unchanged, sets a persisted pause with the provider's message and `Retry-After`, and notifies you. `resume()` clears it.
 - **Cancelling.** Each running job gets an `AbortController`; `Queue.cancel()` deletes the matching jobs, aborts the request in flight (fetch and the Anthropic SDK both take the signal) and rejects anything waiting with `Cancelled`. A cancel that lands after the answer arrived still wins, so a cancelled job never stores its result.
 - **Source excerpts.** The organize prompt asks for each topic's first 6-10 words (`from`). `topicExcerpts()` in `src/main/organize.ts` finds that quote in the lesson's text (ignoring case, punctuation and spacing, in the topic's first paragraph or the one before) and cuts there; a quote it cannot find falls back to the paragraph edge. The excerpt is stored as its own text (`excerpt:<topic id>`).
