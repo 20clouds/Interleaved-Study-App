@@ -11,5 +11,6 @@ api.on = (event: ApiEvent, cb: (payload: unknown) => void): (() => void) => {
   return () => ipcRenderer.removeListener(`ev:${event}`, listener)
 }
 api.pathForFile = (file: File): string => webUtils.getPathForFile(file)
+api.accent = process.argv.find((a) => a.startsWith('--accent='))?.slice('--accent='.length) ?? null
 
 contextBridge.exposeInMainWorld('api', api as unknown as Bridge)

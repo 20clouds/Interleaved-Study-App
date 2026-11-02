@@ -5,7 +5,7 @@ export class InvalidJson extends Error {
 }
 
 /** Character caps for model output (and for the student answers sent to grading). */
-export const CAP = { name: 120, term: 80, summary: 400, quiz: 500, feedback: 200, course: 120, notes: 500, answer: 2000 } as const
+export const CAP = { name: 120, term: 80, summary: 400, quiz: 500, feedback: 200, course: 120, notes: 500, answer: 2000, quote: 200 } as const
 
 /** Model output as trimmed, capped text. Only strings, numbers and booleans count, so a hostile toString cannot throw. */
 export function str(v: unknown, max: number): string {

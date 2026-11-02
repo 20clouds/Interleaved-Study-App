@@ -157,6 +157,9 @@ export type Endpoint = 'auto' | 'generateContent' | 'interactions'
 
 export type Provider = 'gemini' | 'anthropic' | 'openai'
 
+/** A Gemini thinking level. Gemma 4 takes only two: minimal turns thinking off, high turns it on. */
+export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high'
+
 /** Wire API a model is called through: two for Gemini, one each for Claude and OpenAI. */
 export type WireApi = 'generateContent' | 'interactions' | 'messages' | 'responses'
 
@@ -170,7 +173,9 @@ export interface Settings {
     includeModelInCacheKey: boolean
     windowTokens: number
     maxOutputTokens: number
-    minimalThinking: boolean
+    minimalThinking: boolean // Claude and OpenAI; Gemini uses `thinking`
+    thinking: Partial<Record<string, ThinkingLevel>> // Gemini: the level chosen per model (absent: its fastest)
+    defaultsRev: number // which one-time settings migrations have run
   }
   study: { minutes: number; useSuggested: boolean; pace: number }
   pomo: {
@@ -287,7 +292,6 @@ export interface Estimate {
   requests: number
   cached: number
   tokens: number
-  minutes: number
 }
 
 export interface QueueStatus {
@@ -295,13 +299,13 @@ export interface QueueStatus {
   pausedUntil: number | null
   pauseReason: string | null
   running: string | null
+  runningId: string | null // the running job, so the window can cancel it
   queued: number
   failed: { id: string; label: string; error: string; docId?: string | null }[]
   docsTotal: number
   docsDone: number
   chunksTotal: number
   chunksDone: number
-  etaSec: number
   rateLimit: RateLimitInfo | null // set when the provider's rate limit paused everything
   noKey: boolean
 }
@@ -341,7 +345,6 @@ export interface DataSnapshot {
 }
 
 export interface Caps {
-  platform: string
   storeKind: 'sqlite' | 'json'
   storeError: string | null
   safeStorage: boolean

@@ -4,7 +4,7 @@
 // refusal fallback) are probed and remembered per model: on HTTP 400 the offending feature is dropped and the
 // request retried without it.
 import Anthropic from '@anthropic-ai/sdk'
-import type { Endpoint, ModelCaps, Provider, WireApi } from '../../shared/types'
+import type { Endpoint, ModelCaps, Provider, ThinkingLevel, WireApi } from '../../shared/types'
 import { parseRetryAfter } from '../backoff'
 import type { JsonSchema } from './schema'
 
@@ -15,6 +15,10 @@ export class HttpError extends Error {
 }
 export class NetworkError extends Error {}
 export class BlockedError extends Error {}
+/** The person cancelled the request. */
+export class CancelledError extends Error {
+  constructor() { super('Cancelled') }
+}
 
 function summarizeBody(body: string): string {
   try {
@@ -32,7 +36,9 @@ export interface CallOpts {
   maxOutput: number
   json: boolean
   thinkMinimal: boolean
+  level?: ThinkingLevel // Gemini: the level to ask for when thinkMinimal is on (default minimal); others ignore it
   schema?: JsonSchema // Gemini structured output; the other providers ignore it
+  signal?: AbortSignal // aborts the request at once with CancelledError
 }
 
 export interface CallResult {
@@ -71,15 +77,16 @@ export function isAuthError(e: HttpError): boolean {
   return e.status === 400 && /api[ _-]?key|authenticat|credential/i.test(e.body)
 }
 
-// think: minimal thinking (Gemini) / low effort (Claude, OpenAI). low: Gemini thinking level low, when minimal is
-// rejected. room: Gemini thinking headroom (off when the model's output limit is too small for it).
-interface Use { sys: boolean; json: boolean; think: boolean; low: boolean; fallback: boolean; schema: boolean; room: boolean }
+// think: minimal thinking (Gemini) / low effort (Claude, OpenAI). low: Gemini thinking level low, chosen or when
+// minimal is rejected. deep: Gemini level medium or high, as chosen. room: Gemini thinking headroom (off when the
+// model's output limit is too small for it).
+interface Use { sys: boolean; json: boolean; think: boolean; low: boolean; deep: 'medium' | 'high' | null; fallback: boolean; schema: boolean; room: boolean }
 
 // Reasoning models count thinking tokens toward the output cap, so leave room for them on top of the answer.
 const THINK_HEADROOM_LOW = 4096
 const THINK_HEADROOM_DEFAULT = 12000
 
-const geminiLevel = (use: Use): 'minimal' | 'low' | null => (use.think ? 'minimal' : use.low ? 'low' : null)
+const geminiLevel = (use: Use): ThinkingLevel | null => use.deep ?? (use.think ? 'minimal' : use.low ? 'low' : null)
 
 // Gemini counts thinking toward maxOutputTokens too: minimal needs no room, low some, the model's default level more.
 function geminiMaxOutput(o: CallOpts, use: Use): number {
@@ -130,43 +137,51 @@ async function readBody(res: Response, deadline: Promise<never>): Promise<string
 
 const timedOut = (ms: number): NetworkError => new NetworkError(`Request timed out after ${Math.round(ms / 1000)}s`)
 
-/** Rejects with a timeout once `signal` aborts. Raced with each await, so a request settles on time even if the
- * HTTP layer misses the abort (seen with fetch while a body stalls). */
-function deadlineFor(signal: AbortSignal, ms: number): Promise<never> {
-  const p = new Promise<never>((_, reject) => signal.addEventListener('abort', () => reject(timedOut(ms)), { once: true }))
-  p.catch(() => undefined)
-  return p
+/**
+ * One request's stop switch: it fires on the timeout or when `cancel` aborts, and `why()` says which. `deadline`
+ * rejects at that moment; it is raced with each await, so a request settles on time even if the HTTP layer misses
+ * the abort (seen with fetch while a body stalls).
+ */
+function stopper(timeoutMs: number, cancel?: AbortSignal): { signal: AbortSignal; deadline: Promise<never>; why: () => Error; done: () => void } {
+  const ctl = new AbortController()
+  const why = (): Error => (cancel?.aborted ? new CancelledError() : timedOut(timeoutMs))
+  const deadline = new Promise<never>((_, reject) => ctl.signal.addEventListener('abort', () => reject(why()), { once: true }))
+  deadline.catch(() => undefined)
+  const timer = setTimeout(() => ctl.abort(), timeoutMs)
+  const onCancel = (): void => ctl.abort()
+  cancel?.addEventListener('abort', onCancel, { once: true })
+  if (cancel?.aborted) ctl.abort()
+  return { signal: ctl.signal, deadline, why, done: () => { clearTimeout(timer); cancel?.removeEventListener('abort', onCancel) } }
 }
 
-async function post(url: string, headers: Record<string, string>, body: unknown, timeoutMs: number): Promise<unknown> {
-  const ctl = new AbortController()
+async function post(url: string, headers: Record<string, string>, body: unknown, timeoutMs: number, cancel?: AbortSignal): Promise<unknown> {
   // The timer runs until the body is read, so a server that stalls mid-body still times out.
-  const deadline = deadlineFor(ctl.signal, timeoutMs)
-  const timer = setTimeout(() => ctl.abort(), timeoutMs)
+  const stop = stopper(timeoutMs, cancel)
   let res: Response
   let text = ''
   try {
+    if (stop.signal.aborted) throw stop.why()
     try {
       res = await Promise.race([fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headers },
         body: JSON.stringify(body),
-        signal: ctl.signal,
+        signal: stop.signal,
         redirect: 'error' // a base URL host cannot bounce the key header to another host
-      }), deadline])
+      }), stop.deadline])
     } catch (e) {
-      throw ctl.signal.aborted ? timedOut(timeoutMs) : new NetworkError(`Network error: ${e instanceof Error ? e.message : String(e)}`)
+      throw stop.signal.aborted ? stop.why() : new NetworkError(`Network error: ${e instanceof Error ? e.message : String(e)}`)
     }
     try {
-      text = await readBody(res, deadline)
+      text = await readBody(res, stop.deadline)
     } catch (e) {
       if (e instanceof TooLarge) throw new Error(`The response was larger than ${MAX_RESPONSE_BYTES / 1048576} MB, so it was not read.`)
-      if (ctl.signal.aborted) throw timedOut(timeoutMs)
+      if (stop.signal.aborted) throw stop.why()
       if (res.ok) throw new NetworkError(`Network error: ${e instanceof Error ? e.message : String(e)}`)
       // An error status whose body could not be read still reports its status.
     }
   } finally {
-    clearTimeout(timer)
+    stop.done()
   }
   if (!res.ok) throw new HttpError(res.status, text, parseRetryAfter(res.headers.get('retry-after'), text))
   try { return JSON.parse(text) } catch { throw new HttpError(502, `Non-JSON response: ${text.slice(0, 200)}`, null) }
@@ -183,7 +198,7 @@ async function callGenerateContent(cfg: ProviderCfg, o: CallOpts, use: Use): Pro
   const body: Record<string, unknown> = { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig }
   if (use.sys) body.systemInstruction = { parts: [{ text: o.system }] }
   const url = `${trimBase(cfg.baseUrl)}/v1beta/models/${encodeURIComponent(o.model)}:generateContent`
-  const j = (await post(url, { 'x-goog-api-key': cfg.key }, body, cfg.timeoutMs ?? 90000)) as {
+  const j = (await post(url, { 'x-goog-api-key': cfg.key }, body, cfg.timeoutMs ?? 90000, o.signal)) as {
     candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[]
     promptFeedback?: { blockReason?: string }
     usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number }
@@ -227,7 +242,7 @@ async function callInteractions(cfg: ProviderCfg, o: CallOpts, use: Use): Promis
   // The 2026-05-20 revision removed the top-level response_mime_type; JSON mode and the schema live here.
   if (use.json) body.response_format = { type: 'text', mime_type: 'application/json', ...(use.schema && o.schema ? { schema: o.schema } : {}) }
   const url = `${trimBase(cfg.baseUrl)}/v1beta/interactions`
-  const j = (await post(url, { 'x-goog-api-key': cfg.key, 'Api-Revision': '2026-05-20' }, body, cfg.timeoutMs ?? 90000)) as InteractionResp
+  const j = (await post(url, { 'x-goog-api-key': cfg.key, 'Api-Revision': '2026-05-20' }, body, cfg.timeoutMs ?? 90000, o.signal)) as InteractionResp
   const text = interactionText(j)
   if (!text) throw new BlockedError(`Empty answer from the Interactions API${j.status ? ` (status ${j.status})` : ''}`)
   return {
@@ -249,11 +264,10 @@ async function callMessages(cfg: ProviderCfg, o: CallOpts, use: Use): Promise<Ca
   const timeoutMs = cfg.timeoutMs ?? 90000
   const client = new Anthropic({ apiKey: cfg.key, baseURL: trimBase(cfg.baseUrl), maxRetries: 0, timeout: timeoutMs, fetchOptions: { redirect: 'error' } })
   // The SDK's timeout stops at the response headers; this one also covers reading the body.
-  const ctl = new AbortController()
-  const deadline = deadlineFor(ctl.signal, timeoutMs)
-  const timer = setTimeout(() => ctl.abort(), timeoutMs)
+  const stop = stopper(timeoutMs, o.signal)
   let msg: Anthropic.Beta.BetaMessage
   try {
+    if (stop.signal.aborted) throw stop.why()
     msg = await Promise.race([client.beta.messages.create({
       model: o.model,
       max_tokens: o.maxOutput + (use.think ? THINK_HEADROOM_LOW : THINK_HEADROOM_DEFAULT),
@@ -261,9 +275,10 @@ async function callMessages(cfg: ProviderCfg, o: CallOpts, use: Use): Promise<Ca
       messages: [{ role: 'user', content: use.sys ? o.prompt : `${o.system}\n\n${o.prompt}` }],
       ...(use.think ? { output_config: { effort: 'low' as const } } : {}),
       ...(use.fallback ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {})
-    }, { signal: ctl.signal }), deadline])
+    }, { signal: stop.signal }), stop.deadline])
   } catch (e) {
-    if (e instanceof Anthropic.APIConnectionTimeoutError || ctl.signal.aborted) throw timedOut(timeoutMs)
+    if (stop.signal.aborted) throw stop.why()
+    if (e instanceof Anthropic.APIConnectionTimeoutError) throw timedOut(timeoutMs)
     if (e instanceof Anthropic.APIConnectionError) throw new NetworkError(`Network error: ${e.message}`)
     if (e instanceof Anthropic.APIError && typeof e.status === 'number') {
       const body = e.error ? JSON.stringify(e.error) : e.message
@@ -271,7 +286,7 @@ async function callMessages(cfg: ProviderCfg, o: CallOpts, use: Use): Promise<Ca
     }
     throw e
   } finally {
-    clearTimeout(timer)
+    stop.done()
   }
   if (msg.stop_reason === 'refusal') {
     const cat = msg.stop_details?.category
@@ -309,7 +324,7 @@ async function callResponses(cfg: ProviderCfg, o: CallOpts, use: Use): Promise<C
   if (use.json) body.text = { format: { type: 'json_object' } }
   if (use.think) body.reasoning = { effort: 'low' }
   const url = `${trimBase(cfg.baseUrl)}/v1/responses`
-  const j = (await post(url, { Authorization: `Bearer ${cfg.key}` }, body, cfg.timeoutMs ?? 90000)) as OpenAIResp
+  const j = (await post(url, { Authorization: `Bearer ${cfg.key}` }, body, cfg.timeoutMs ?? 90000, o.signal)) as OpenAIResp
   const parts = (j.output || []).filter((x) => x.type === 'message').flatMap((x) => x.content || [])
   const refusal = parts.find((c) => c.type === 'refusal')
   if (refusal) throw new BlockedError(`The model declined this request${refusal.refusal ? `: ${refusal.refusal.slice(0, 200)}` : ''}`)
@@ -364,12 +379,15 @@ export async function generate(cfg: ProviderCfg, o: CallOpts, caps: ModelCaps): 
   const jsonMode = cfg.provider !== 'anthropic'
   const gemini = cfg.provider === 'gemini'
   const json = jsonMode && o.json && caps.json !== false
-  const think = o.thinkMinimal && caps.thinkMinimal !== false
+  // Gemini sends the chosen level; minimal steps down to low when the model rejects it, as before.
+  const pick = gemini && o.thinkMinimal ? o.level ?? 'minimal' : null
+  const think = o.thinkMinimal && caps.thinkMinimal !== false && (!gemini || pick === 'minimal')
   const use: Use = {
     sys: caps.system !== false,
     json,
     think,
-    low: gemini && o.thinkMinimal && !think && caps.thinkLevel !== 'none',
+    low: gemini && (pick === 'minimal' || pick === 'low') && !think && caps.thinkLevel !== 'none',
+    deep: pick === 'medium' || pick === 'high' ? pick : null,
     fallback: cfg.provider === 'anthropic' && claudeSupportsFallback(o.model) && caps.fallback !== false,
     // Structured output rides on JSON mode, so it is never sent without it.
     schema: json && gemini && !!o.schema && caps.schema !== false && geminiSupportsSchema(o.model),
@@ -385,7 +403,7 @@ export async function generate(cfg: ProviderCfg, o: CallOpts, caps: ModelCaps): 
       if (!jsonMode && caps.json !== false) { caps.json = false; changed = true }
       if (use.think && caps.thinkMinimal !== true) { caps.thinkMinimal = true; changed = true }
       const level = gemini ? geminiLevel(use) : null
-      if (level && caps.thinkLevel !== level) { caps.thinkLevel = level; changed = true }
+      if ((level === 'minimal' || level === 'low') && caps.thinkLevel !== level) { caps.thinkLevel = level; changed = true }
       if (use.fallback && caps.fallback !== true) { caps.fallback = true; changed = true }
       if (use.schema && (caps.schema !== true || caps.schemaFails)) { caps.schema = true; caps.schemaFails = 0; changed = true }
       return { result, caps, changed }
@@ -424,6 +442,10 @@ export async function generate(cfg: ProviderCfg, o: CallOpts, caps: ModelCaps): 
       if (names(OUTPUT_NAMES)) {
         if (geminiMaxOutput(o, use) > o.maxOutput) { use.room = false; caps.room = false; changed = true; continue }
         throw e
+      }
+      // A chosen medium or high level the model rejects: this request goes at the model's own level instead.
+      if (use.deep && (names(THINK_NAMES) || !names(['mime', 'json', 'response_format', 'system', 'instructions']))) {
+        use.deep = null; continue
       }
       if ((use.think || use.low) && (names(THINK_NAMES) || !names(['mime', 'json', 'response_format', 'system', 'instructions']))) {
         if (use.think) { use.think = false; caps.thinkMinimal = false; use.low = gemini && caps.thinkLevel !== 'none' } else { use.low = false; caps.thinkLevel = 'none' }

@@ -3,6 +3,7 @@
 // files: anything dropped outside an open course goes to the New course flow so the student names it.
 import { useEffect, useState } from 'react'
 import type { Estimate, ImportResult } from '../../../shared/types'
+import type { MenuCommand } from '../../../shared/api'
 import { api, errMsg } from '../api'
 import { addPaths, useApp } from '../state'
 import { Modal } from '../ui'
@@ -67,6 +68,12 @@ export function ImportFlow() {
     }
   })
 
+  // File > Import Lessons and Import Folder: the picked files go wherever dropped files would.
+  useEffect(() => api.on('menu', (cmd) => {
+    const kind = (cmd as MenuCommand) === 'import-folder' ? 'folder' : 'files'
+    void api.pickPaths(kind).then((paths) => { if (paths.length) importFlow.drop(paths) }, (e) => toast(errMsg(e), true))
+  }), [toast])
+
   const confirmReplace = async (): Promise<void> => {
     if (!result) return
     setBusy(true)
@@ -118,7 +125,6 @@ export function ImportFlow() {
           <div className="statline">
             <div className="stat"><b>~{estimate.est.requests}</b><span>requests</span></div>
             <div className="stat"><b>~{estimate.est.tokens.toLocaleString()}</b><span>tokens</span></div>
-            <div className="stat"><b>~{Math.max(1, Math.ceil(estimate.est.minutes))}</b><span>minutes</span></div>
             {estimate.est.cached > 0 && <div className="stat"><b>{estimate.est.cached}</b><span>windows already cached</span></div>}
           </div>
           <p className="help">Until then, lessons show provisional topic names taken from headings or first sentences, and you can already study them. You can start this later from the Queue page.</p>

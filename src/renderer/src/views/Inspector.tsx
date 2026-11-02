@@ -1,22 +1,23 @@
-// Right inspector: why the topic is due, AI summary, terms, prerequisites, history, notes, all overrides,
-// rename/split/delete, quiz and "study now".
+// Right inspector: why the topic is due, AI summary, terms, prerequisites, its source text in the lesson (the AI's
+// exact cut when there is one), history, notes, all overrides, rename/split/delete, quiz and "study now".
 import { useEffect, useState } from 'react'
 import type { Doc, Rating } from '../../../shared/types'
 import { RATINGS, mastery, status, why } from '../../../shared/sched'
 import { DAY, localDateTime, type PushUnit } from '../../../shared/util'
 import { api } from '../api'
-import { useAction, useApp } from '../state'
+import { courseClass, useAction, useApp, useConfirmAction } from '../state'
 import { Icon } from '../icons'
-import { Confirm, MasteryBar, Modal, StatusChip, deckName, fmtDate, fmtDateTime, fmtMin, Spinner } from '../ui'
+import { MasteryBar, Modal, StatusChip, deckName, fmtDate, fmtDateTime, fmtMin, Spinner } from '../ui'
 import { QuizPanel } from '../components/Quiz'
 
 export function Inspector({ docsMap }: { docsMap: Map<string, Doc> }) {
   const { selected, topics, courses, now, setSelected, session, setView } = useApp()
   const act = useAction()
+  const ask = useConfirmAction()
   const t = selected ? topics.get(selected) : undefined
   const [notes, setNotes] = useState(t?.notes ?? '')
-  const [text, setText] = useState<string[] | null>(null)
-  const [showText, setShowText] = useState(false)
+  const [src, setSrc] = useState<{ paras: string[]; excerpt: string | null } | null>(null)
+  const [srcOpen, setSrcOpen] = useState(false)
   const [splitAt, setSplitAt] = useState<number | null>(null)
   const [splitName, setSplitName] = useState('')
   const [dueAt, setDueAt] = useState(localDateTime(t?.due ?? now + DAY))
@@ -25,19 +26,18 @@ export function Inspector({ docsMap }: { docsMap: Map<string, Doc> }) {
   const [score, setScore] = useState(t?.override ?? 50)
   const [quiz, setQuiz] = useState(false)
   const [quizScore, setQuizScore] = useState<number | null>(null)
-  const [confirmReset, setConfirmReset] = useState(false)
-  const [confirmDelete, setConfirmDelete] = useState(false)
   const [minutes, setMinutes] = useState(t?.minutes ?? 30)
 
   useEffect(() => { setNotes(t?.notes ?? '') }, [t?.notes])
   useEffect(() => { setMinutes(t?.minutes ?? 30) }, [t?.minutes])
   useEffect(() => {
-    if (!showText || !t) return
+    if (!t) return
     let live = true
-    setText(null)
-    void api.topicText(t.id).then((r) => { if (live) setText(r.paras) })
+    setSrc(null)
+    setSplitAt(null)
+    void api.topicText(t.id).then((r) => { if (live) setSrc({ paras: r.paras, excerpt: r.excerpt }) })
     return () => { live = false }
-  }, [showText, t?.id, t?.words]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [t?.id, t?.words]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!t) {
     return <aside className="pane inspector"><div className="muted" style={{ marginTop: 40, textAlign: 'center' }}>Select a topic to see why it is due, its history and overrides.</div></aside>
@@ -70,11 +70,43 @@ export function Inspector({ docsMap }: { docsMap: Map<string, Doc> }) {
       <div className="row-flex">
         <button className="btn primary" onClick={() => void studyNow()}><Icon.play /> Study now</button>
         <button className="btn" onClick={() => { setQuizScore(null); setQuiz(true) }}><Icon.quiz /> Quiz</button>
-        <button className="btn ghost" onClick={() => setShowText((x) => !x)}>{showText ? 'Hide text' : 'Show text'}</button>
       </div>
       {t.summary && <div><h3>Summary</h3><div className="summary sel">{t.summary}</div></div>}
       {t.terms.length > 0 && <div><h3>Key terms</h3><div className="terms">{t.terms.map((x) => <span className="chip" key={x}>{x}</span>)}</div></div>}
       {t.prereqs.length > 0 && <div><h3>Prerequisites</h3><div className="terms">{t.prereqs.map((x) => <span className="chip" key={x}>{x}</span>)}</div></div>}
+
+      <div>
+        <h3>Source in file {splitAt === null ? '' : '(choose where the new topic starts)'}</h3>
+        {d && <div className="muted small" style={{ marginBottom: 6 }}>{deckName(d)}{t.start != null && t.end != null ? `, paragraphs ${t.start}–${t.end}` : ''}</div>}
+        {!src ? <Spinner /> : splitAt === null ? (
+          <>
+            <div className={`source ${courseClass(c)}${srcOpen ? ' open' : ''}`}>
+              <div className="textview sel">{src.excerpt ?? (src.paras.join('\n\n') || 'No stored text.')}</div>
+            </div>
+            {!src.excerpt && !t.provisional && !t.manual && src.paras.length > 0 && (
+              <div className="help">This is the topic’s paragraphs. The AI’s exact cut is stored for lessons organized from now on; re-organize this lesson to see it here.</div>
+            )}
+            <div className="row-flex" style={{ marginTop: 6 }}>
+              <button className="btn ghost small" onClick={() => setSrcOpen((x) => !x)}>{srcOpen ? 'Show less' : 'Show all'}</button>
+              {src.paras.length > 1 && <button className="btn small" onClick={() => setSplitAt(Math.ceil(src.paras.length / 2))}><Icon.split /> Split this topic</button>}
+            </div>
+          </>
+        ) : (
+          <>
+            {src.paras.map((p, i) => (
+              <label key={i} className="split-para">
+                <input type="radio" name="split" disabled={i === 0} checked={splitAt === i} onChange={() => setSplitAt(i)} aria-label={`New topic starts at paragraph ${i + 1}`} />
+                <span className="small serif" style={{ opacity: i >= splitAt ? 1 : 0.6 }}>{p.length > 220 ? `${p.slice(0, 220)}…` : p}</span>
+              </label>
+            ))}
+            <label className="field" style={{ marginTop: 8 }}><span>Name of the new topic (optional)</span><input className="input" value={splitName} onChange={(e) => setSplitName(e.target.value)} placeholder="Taken from its first sentence if empty" /></label>
+            <div className="row-flex" style={{ marginTop: 8 }}>
+              <button className="btn ghost" onClick={() => setSplitAt(null)}>Cancel</button>
+              <button className="btn primary" onClick={() => void act(async () => { const id = await api.splitTopic(t.id, splitAt, splitName || undefined); setSplitAt(null); setSplitName(''); setSelected(id) }, 'Topic split')}>Split here</button>
+            </div>
+          </>
+        )}
+      </div>
       <dl className="facts">
         <dt>Suggested time</dt>
         <dd><input className="input num" style={{ width: 70, minHeight: 24, padding: '1px 6px' }} type="number" min={1} max={240} value={minutes}
@@ -86,32 +118,6 @@ export function Inspector({ docsMap }: { docsMap: Map<string, Doc> }) {
         <dt>Length</dt><dd>{t.words.toLocaleString()} words</dd>
         {t.due ? <><dt>Next due</dt><dd>{fmtDateTime(t.due)}</dd></> : null}
       </dl>
-
-      {showText && (
-        <div className="section-rule">
-          <h3>Text {splitAt === null ? '' : '(choose where the new topic starts)'}</h3>
-          {!text ? <Spinner /> : splitAt === null ? (
-            <>
-              <div className="textview">{text.join('\n\n') || 'No stored text.'}</div>
-              {text.length > 1 && <button className="btn small" style={{ marginTop: 8 }} onClick={() => setSplitAt(Math.ceil(text.length / 2))}><Icon.split /> Split this topic</button>}
-            </>
-          ) : (
-            <>
-              {text.map((p, i) => (
-                <label key={i} className="split-para">
-                  <input type="radio" name="split" disabled={i === 0} checked={splitAt === i} onChange={() => setSplitAt(i)} aria-label={`New topic starts at paragraph ${i + 1}`} />
-                  <span className="small serif" style={{ opacity: i >= splitAt ? 1 : 0.6 }}>{p.length > 220 ? `${p.slice(0, 220)}…` : p}</span>
-                </label>
-              ))}
-              <label className="field" style={{ marginTop: 8 }}><span>Name of the new topic (optional)</span><input className="input" value={splitName} onChange={(e) => setSplitName(e.target.value)} placeholder="Taken from its first sentence if empty" /></label>
-              <div className="row-flex" style={{ marginTop: 8 }}>
-                <button className="btn ghost" onClick={() => setSplitAt(null)}>Cancel</button>
-                <button className="btn primary" onClick={() => void act(async () => { const id = await api.splitTopic(t.id, splitAt, splitName || undefined); setSplitAt(null); setSplitName(''); setSelected(id) }, 'Topic split')}>Split here</button>
-              </div>
-            </>
-          )}
-        </div>
-      )}
 
       <div className="section-rule">
         <h3>Overrides</h3>
@@ -139,7 +145,10 @@ export function Inspector({ docsMap }: { docsMap: Map<string, Doc> }) {
           <button className="btn" onClick={() => void act(() => api.override(t.id, { kind: 'score', value: score }), 'Score set')}>Set score</button>
           {t.override !== null && t.override !== undefined && <button className="btn ghost" onClick={() => void act(() => api.override(t.id, { kind: 'clearScore' }), 'Score override cleared')}>Clear score</button>}
           <span style={{ flex: 1 }} />
-          <button className="btn ghost danger" onClick={() => setConfirmReset(true)}>Reset</button>
+          <button className="btn ghost danger" onClick={() => void ask({
+            message: 'Reset this topic?', confirm: 'Reset', danger: true,
+            detail: 'Clears its schedule, reviews, time spent and score override. It becomes new again.'
+          }, () => api.override(t.id, { kind: 'reset' }), 'Topic reset')}>Reset</button>
         </div>
       </div>
 
@@ -163,7 +172,9 @@ export function Inspector({ docsMap }: { docsMap: Map<string, Doc> }) {
         <textarea className="input serif" rows={5} value={notes} onChange={(e) => setNotes(e.target.value)}
           onBlur={() => notes !== t.notes && void act(() => api.updateTopic(t.id, { notes }))} placeholder="Your notes on this topic" />
       </div>
-      <div><button className="btn ghost danger" onClick={() => setConfirmDelete(true)}><Icon.trash /> Delete topic</button></div>
+      <div><button className="btn ghost danger" onClick={() => void ask({
+        message: `Delete "${t.name}"?`, confirm: 'Delete', danger: true, detail: 'The topic and its study history are removed.'
+      }, async () => { await api.deleteTopics([t.id]); setSelected(null) })}><Icon.trash /> Delete topic</button></div>
 
       {quiz && (
         <Modal title={`Quiz: ${t.name}`} wide onClose={() => setQuiz(false)}>
@@ -181,10 +192,6 @@ export function Inspector({ docsMap }: { docsMap: Map<string, Doc> }) {
           )}
         </Modal>
       )}
-      {confirmReset && <Confirm title="Reset this topic?" danger confirm="Reset" body={<p>Clears its schedule, reviews, time spent and score override. It becomes new again.</p>}
-        onNo={() => setConfirmReset(false)} onYes={() => { setConfirmReset(false); void act(() => api.override(t.id, { kind: 'reset' }), 'Topic reset') }} />}
-      {confirmDelete && <Confirm title={`Delete "${t.name}"?`} danger confirm="Delete" body={<p>The topic and its study history are removed.</p>}
-        onNo={() => setConfirmDelete(false)} onYes={() => { setConfirmDelete(false); void act(async () => { await api.deleteTopics([t.id]); setSelected(null) }) }} />}
     </aside>
   )
 }

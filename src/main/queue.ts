@@ -1,12 +1,13 @@
 // Central, persisted AI request queue: concurrency 1, requests sent as fast as the provider allows.
 // Hitting the provider's rate limit (HTTP 429) pauses everything and notifies the person; nothing is lost, so
 // Continue picks up exactly where it stopped. 5xx and network errors back off and retry (honoring Retry-After).
+// Any queued or running job can be cancelled; the request in flight is aborted at once.
 // Also: JSON-mode fallback, one repair retry, result cache.
 import type { Job, ModelCaps, QueueStatus, RateLimitInfo, Settings } from '../shared/types'
-import { DEFAULT_REQUEST_MS, baseUrlFor, providerInfo } from '../shared/defaults'
+import { baseUrlFor, geminiLevelFor, providerInfo } from '../shared/defaults'
 import type { Store } from './store/types'
 import { MAX_ATTEMPTS, MAX_RETRY_AFTER_MS, backoffMs } from './backoff'
-import { BlockedError, HttpError, NetworkError, defaultCaps, generate, isAuthError, normalizeCaps } from './ai/provider'
+import { BlockedError, CancelledError, HttpError, NetworkError, defaultCaps, generate, isAuthError, normalizeCaps } from './ai/provider'
 import { InvalidJson, extractJson } from './ai/json'
 import type { JsonSchema } from './ai/schema'
 
@@ -65,6 +66,7 @@ export class Queue {
   pausedUntil: number | null = null
   pauseReason: string | null = null
   running: Job | null = null
+  private abort: AbortController | null = null // the running job's: cancel() aborts its request
   private looping = false
   private wakeFn: (() => void) | null = null
   private waiters = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
@@ -114,6 +116,29 @@ export class Queue {
     if (!j) return
     this.d.store.put('jobs', { ...j, status: 'queued', attempts: 0, nextAt: 0, error: null })
     this.kick()
+  }
+
+  /**
+   * Stop the queued or running jobs that match (all of them by default). The request in flight is aborted at once
+   * and anything waiting for a result gets a "Cancelled" error. Returns the cancelled jobs.
+   */
+  cancel(match: (j: Job) => boolean = () => true): Job[] {
+    const out: Job[] = []
+    for (const j of this.d.store.all<Job>('jobs')) {
+      if ((j.status !== 'queued' && j.status !== 'running') || !match(j)) continue
+      this.d.store.del('jobs', j.id)
+      this.waiters.get(j.id)?.reject(new CancelledError())
+      this.waiters.delete(j.id)
+      out.push(j)
+    }
+    if (this.running && out.some((j) => j.id === this.running!.id)) this.abort?.abort()
+    // Nothing left to do: a backoff wait for a cancelled job no longer applies.
+    if (!this.d.store.all<Job>('jobs').some((j) => j.status === 'queued' || j.status === 'running')) {
+      this.pausedUntil = null
+      if (!this.userPaused) this.pauseReason = null
+    }
+    this.kick()
+    return out
   }
 
   discard(id: string): void {
@@ -177,11 +202,13 @@ export class Queue {
     const store = this.d.store
     this.running = { ...job, status: 'running' }
     store.put('jobs', this.running)
+    const abort = new AbortController()
+    this.abort = abort
     this.emitStatus()
     try {
       const handler = this.d.handlers[job.kind]
       if (!handler) throw new Error(`No handler for job kind ${job.kind}`)
-      const result = await handler(job, (spec) => this.ai(spec))
+      const result = await handler(job, (spec) => this.ai(spec, abort.signal))
       if (store.get('jobs', job.id)) store.put('jobs', { ...job, status: 'done', error: null })
       this.waiters.get(job.id)?.resolve(result)
       this.waiters.delete(job.id)
@@ -189,7 +216,11 @@ export class Queue {
       this.d.emit?.('data')
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e))
-      if (err instanceof PausedSignal) {
+      if (err instanceof CancelledError || !store.get('jobs', job.id)) {
+        // Cancelled, or its lesson was deleted meanwhile: the job is gone and must not come back.
+        this.waiters.get(job.id)?.reject(err instanceof CancelledError ? err : new CancelledError())
+        this.waiters.delete(job.id)
+      } else if (err instanceof PausedSignal) {
         store.put('jobs', { ...job, status: 'queued' })
       } else if (err instanceof RateLimitError) {
         // Nothing is lost: the job goes back exactly as it was (no attempt used), finished work stays stored or
@@ -223,6 +254,7 @@ export class Queue {
       }
     } finally {
       this.running = null
+      this.abort = null
       this.emitStatus()
     }
   }
@@ -251,7 +283,7 @@ export class Queue {
   }
 
   /** One logical AI call: cache → request (with capability fallback) → parse → one repair retry. */
-  private async ai<T>(spec: AiSpec<T>): Promise<T> {
+  private async ai<T>(spec: AiSpec<T>, signal?: AbortSignal): Promise<T> {
     const store = this.d.store
     if (spec.cacheKey && !spec.skipCacheRead) {
       const hit = store.get<{ id: string; value: unknown }>('cache', spec.cacheKey)
@@ -259,7 +291,7 @@ export class Queue {
         try { return spec.validate(hit.value) } catch { store.del('cache', spec.cacheKey) }
       }
     }
-    const raw = await this.request(spec.system, spec.prompt, spec.maxOutput, spec.thinkMinimal ?? true, spec.schema)
+    const raw = await this.request(spec.system, spec.prompt, spec.maxOutput, spec.thinkMinimal ?? true, spec.schema, signal)
     let value: T
     try {
       value = spec.validate(extractJson(raw))
@@ -267,7 +299,7 @@ export class Queue {
       if (!(e instanceof InvalidJson) && !(e instanceof SyntaxError) && !(e instanceof TypeError)) throw e
       // Exactly one repair retry: send the bad output back, fenced and labeled as data so it cannot pose as instructions.
       const repairPrompt = `${spec.prompt}\n\n${repairNote(raw)}`
-      const raw2 = await this.request(spec.system, repairPrompt, spec.maxOutput, spec.thinkMinimal ?? true, spec.schema)
+      const raw2 = await this.request(spec.system, repairPrompt, spec.maxOutput, spec.thinkMinimal ?? true, spec.schema, signal)
       try {
         value = spec.validate(extractJson(raw2))
       } catch (e2) {
@@ -278,27 +310,35 @@ export class Queue {
     return value
   }
 
-  private async request(system: string, prompt: string, maxOutput: number, thinkMinimal: boolean, schema?: JsonSchema): Promise<string> {
+  private async request(system: string, prompt: string, maxOutput: number, thinkMinimal: boolean, schema?: JsonSchema, signal?: AbortSignal): Promise<string> {
     const s = this.d.settings().ai
     const key = this.d.getKey()
+    if (signal?.aborted) throw new CancelledError()
     if (!key) throw new AuthError('Add your API key in Settings to organize lessons.')
     if (this.userPaused) throw new PausedSignal('paused')
     const caps = this.caps(s.model)
-    const t0 = this.now()
+    // Gemini always gets its chosen thinking level; the minimal-thinking switch is for Claude and OpenAI.
+    const gemini = s.provider === 'gemini'
     try {
       const { result, caps: newCaps, changed } = await generate(
         { provider: s.provider, baseUrl: baseUrlFor(s), key, endpoint: s.endpoint },
-        { model: s.model, system, prompt, maxOutput, json: true, thinkMinimal: thinkMinimal && s.minimalThinking, schema },
+        {
+          model: s.model, system, prompt, maxOutput, json: true, schema, signal,
+          thinkMinimal: thinkMinimal && (gemini || s.minimalThinking), level: gemini ? geminiLevelFor(s) : undefined
+        },
         caps
       )
       if (changed) this.saveCaps(newCaps)
-      this.recordDuration(this.now() - t0)
+      // A cancel that lands after the answer arrived still wins: the handler must not store the result.
+      if (signal?.aborted) throw new CancelledError()
       return result.text
     } catch (e) {
       if (e instanceof HttpError) {
         if (e.status === 429) throw new RateLimitError(e.message, e.retryAfterMs)
         // A server asking for an hour or more is treated like a rate limit: paused until Continue.
         if (e.status >= 500 && (e.retryAfterMs ?? 0) >= MAX_RETRY_AFTER_MS) throw new RateLimitError(`Server error (HTTP ${e.status}); the server asked to wait an hour or more`, e.retryAfterMs)
+        // Google answers 503 when a model is overloaded ("high demand"); say so, since another model usually is not.
+        if (e.status === 503) throw new RetryableError(`"${s.model}" is overloaded right now (HTTP 503). A lighter model in Settings usually answers at once`, e.retryAfterMs)
         if (e.status >= 500) throw new RetryableError(`Server error (HTTP ${e.status})`, e.retryAfterMs)
         if (e.status === 401 || e.status === 403 || isAuthError(e)) throw new AuthError(`API key rejected (HTTP ${e.status}). Check the key in Settings, then resume.`)
         if (e.status === 404) throw new Error(`Model "${s.model}" not found (HTTP 404). Check the model ID in Settings.`)
@@ -310,12 +350,6 @@ export class Queue {
     }
   }
 
-  /** Moving average of request time, kept for time estimates (the Queue page and the import estimate). */
-  private recordDuration(ms: number): void {
-    const prev = this.d.store.kvGet<number>('avgRequestMs')
-    this.d.store.kvSet('avgRequestMs', Math.round(prev ? prev * 0.8 + ms * 0.2 : ms))
-  }
-
   status(): QueueStatus {
     const now = this.now()
     const jobs = this.d.store.all<Job>('jobs')
@@ -323,20 +357,18 @@ export class Queue {
     const docIds = [...new Set(org.map((j) => j.docId).filter(Boolean))] as string[]
     const docsDone = docIds.filter((id) => org.filter((j) => j.docId === id).every((j) => j.status === 'done')).length
     const pending = jobs.filter((j) => j.status === 'queued' || j.status === 'running')
-    const avgMs = this.d.store.kvGet<number>('avgRequestMs') ?? DEFAULT_REQUEST_MS
-    const backoffLeft = this.pausedUntil ? Math.max(0, this.pausedUntil - now) / 1000 : 0
     return {
       userPaused: this.userPaused,
       pausedUntil: this.pausedUntil && this.pausedUntil > now ? this.pausedUntil : null,
       pauseReason: this.pauseReason,
       running: this.running?.label ?? null,
+      runningId: this.running?.id ?? null,
       queued: pending.length,
       failed: jobs.filter((j) => j.status === 'failed').map((j) => ({ id: j.id, label: j.label, error: j.error ?? 'Failed', docId: j.docId })),
       docsTotal: docIds.length,
       docsDone,
       chunksTotal: org.length,
       chunksDone: org.filter((j) => j.status === 'done').length,
-      etaSec: pending.length ? Math.round((pending.length * avgMs) / 1000 + backoffLeft) : 0,
       rateLimit: this.rateLimit,
       noKey: !this.d.getKey()
     }

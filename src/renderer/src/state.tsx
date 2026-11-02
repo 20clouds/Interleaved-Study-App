@@ -43,6 +43,15 @@ interface Ctx {
 
 const C = createContext<Ctx | null>(null)
 
+/** Use the system accent color for primary buttons, selection and focus, with text that stays readable on it. */
+export function applyAccent(hex: string | null): void {
+  const s = document.documentElement.style
+  if (!hex || !/^#[0-9a-f]{6}$/i.test(hex)) { s.removeProperty('--tide'); s.removeProperty('--tide-ink'); return }
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
+  s.setProperty('--tide', hex)
+  s.setProperty('--tide-ink', 0.299 * r + 0.587 * g + 0.114 * b > 170 ? '#1D1D1F' : '#FFFFFF')
+}
+
 export function useApp(): Ctx {
   const c = useContext(C)
   if (!c) throw new Error('useApp outside provider')
@@ -62,6 +71,12 @@ export function useAction(): <T>(fn: () => Promise<T>, ok?: string) => Promise<T
       return undefined
     }
   }, [toast])
+}
+
+/** Ask in a native sheet on the window, then run the action the same way as useAction. */
+export function useConfirmAction(): (o: Parameters<typeof api.confirm>[0], fn: () => Promise<unknown>, ok?: string) => Promise<void> {
+  const act = useAction()
+  return useCallback(async (o, fn, ok) => { if (await api.confirm(o)) await act(fn, ok) }, [act])
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -113,6 +128,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       api.on('data', () => void reload()),
       api.on('queue', (q) => setQueue(q as QueueStatus)),
       api.on('session', (s) => setSession(s as SessionState | null)),
+      api.on('accent', (a) => applyAccent(a as string | null)),
       api.on('nav', (p) => {
         const n = p as { view: View; action?: string }
         setViewState(n.view)
@@ -122,15 +138,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const t = window.setInterval(() => setNow(Date.now()), 30000)
     return () => { offs.forEach((o) => o()); window.clearInterval(t) }
   }, [reload, refreshBoot])
-
-  // Theme follows the OS setting (main sets nativeTheme.themeSource from Settings).
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    const apply = (): void => { document.documentElement.dataset.theme = mq.matches ? 'dark' : 'light' }
-    apply()
-    mq.addEventListener('change', apply)
-    return () => mq.removeEventListener('change', apply)
-  }, [settings?.theme])
 
   // Ribbon advance moment + reset pending rating when the topic changes
   useEffect(() => {

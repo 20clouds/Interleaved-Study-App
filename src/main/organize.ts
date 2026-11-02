@@ -1,5 +1,6 @@
 // AI-organized import: prompts, validation/repair of paragraph ranges, merging of continuing topics,
-// and local de-duplication. The model never re-outputs source text; we slice locally.
+// and local de-duplication. The model never re-outputs source text; we slice locally, at paragraph edges for the
+// topic text and at the opening words the model quotes for each topic's exact excerpt.
 import crypto from 'crypto'
 import type { Para } from '../shared/types'
 import { clamp, isGenericName, normName } from '../shared/util'
@@ -7,14 +8,15 @@ import { firstSentenceName, safeName, sliceText } from './preprocess'
 import { CAP, InvalidJson, str, strList } from './ai/json'
 import type { JsonSchema } from './ai/schema'
 
-export const PROMPT_VERSION = 'org-v3'
+export const PROMPT_VERSION = 'org-v4'
 
 export const ORGANIZE_SYSTEM = [
   'You organize study material into clear study topics.',
   'Input: numbered paragraphs labeled [pN] plus the document outline.',
   'Return ONLY compact JSON, no prose, no code fences:',
-  '{"title":string?,"topics":[{"start":N,"end":N,"name":string,"unit":string,"summary":string,"difficulty":1-5,"terms":[string],"prereqs":[string],"continues":bool}]}',
+  '{"title":string?,"topics":[{"start":N,"end":N,"from":string,"name":string,"unit":string,"summary":string,"difficulty":1-5,"terms":[string],"prereqs":[string],"continues":bool}]}',
   'Rules: topics cover every paragraph of the window in order, no gaps or overlaps; start/end are paragraph numbers.',
+  'from: the first 6-10 words of the topic, copied exactly from the text where the topic begins. A topic may begin partway through a paragraph: give that paragraph to whichever topic has most of it, and still quote the exact words where this topic begins.',
   'name: a specific concept title of at most 8 words (e.g. "Michaelis-Menten enzyme kinetics"); never generic like "Part 2", "Section 3", "Introduction continued".',
   'unit: the section/chapter the topic belongs to. summary: 1-2 sentences. terms: up to 6 key terms. prereqs: up to 3 prerequisite concepts.',
   'Aim for topics of roughly 300-1500 words. When headings are good, treat them as strong boundaries and mainly clean names and group units; split or merge only when clearly warranted.',
@@ -41,6 +43,7 @@ export const ORGANIZE_SCHEMA: JsonSchema = {
         properties: {
           start: { type: 'integer' },
           end: { type: 'integer' },
+          from: { type: 'string' },
           name: { type: 'string' },
           unit: { type: 'string' },
           summary: { type: 'string' },
@@ -49,7 +52,7 @@ export const ORGANIZE_SCHEMA: JsonSchema = {
           prereqs: PREREQS,
           continues: { type: 'boolean' }
         },
-        required: ['start', 'end', 'name', 'unit', 'summary', 'difficulty', 'terms', 'prereqs', 'continues']
+        required: ['start', 'end', 'from', 'name', 'unit', 'summary', 'difficulty', 'terms', 'prereqs', 'continues']
       }
     }
   },
@@ -71,6 +74,7 @@ export function organizePrompt(o: { lessonTitle: string; outline: string; paras:
 export interface WinTopic {
   start: number
   end: number
+  from: string // the topic's opening words as quoted by the model ('' when missing)
   name: string
   unit: string
   summary: string
@@ -114,6 +118,7 @@ export function normalizeWindow(raw: unknown, from: number, to: number, paras: P
     end = clamp(end, from, to)
     list.push({
       start, end,
+      from: str(r.from, CAP.quote),
       name: capWords(str(r.name, CAP.name).replace(/\s+/g, ' '), 10),
       unit: str(r.unit, CAP.name),
       summary: str(r.summary, CAP.summary),
@@ -193,7 +198,7 @@ export function finalizeWindows(results: WinResult[], paras: Para[], lessonTitle
     const t = dedup[i]
     if (words(t) < minWords && dedup.length > 1) {
       if (out.length) { mergeInto(out[out.length - 1], t); continue }
-      if (i + 1 < dedup.length) { const n = dedup[i + 1]; n.start = t.start; continue }
+      if (i + 1 < dedup.length) { const n = dedup[i + 1]; n.start = t.start; n.from = t.from; continue }
     }
     out.push(t)
   }
@@ -215,6 +220,83 @@ export function finalizeWindows(results: WinResult[], paras: Para[], lessonTitle
     }
   }
   return out.map((t) => ({ ...t, words: words(t) || paras.filter((p) => p.id >= t.start && p.id <= t.end).reduce((a, p) => a + p.words, 0) }))
+}
+
+/** Lower-cased letters and digits, every other run of characters as one space, and where each character came from. */
+function foldWithMap(s: string): { norm: string; at: number[] } {
+  const out: string[] = []
+  const at: number[] = []
+  let space = true
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (/[\p{L}\p{N}]/u.test(ch)) {
+      const low = ch.toLowerCase()
+      for (const c of low) { out.push(c); at.push(i) }
+      space = false
+    } else if (!space) {
+      out.push(' '); at.push(i); space = true
+    }
+  }
+  return { norm: out.join(''), at }
+}
+
+/**
+ * Where `quote` starts in `text` between offsets lo and hi, nearest to `near`, or null. Matching ignores case,
+ * punctuation and spacing, and starts on a word. If the whole quote is not there (the model tidied a word), its
+ * first 6, then 4 words are tried.
+ */
+function findQuote(f: { norm: string; at: number[] }, quote: string, lo: number, hi: number, near: number): number | null {
+  const words = foldWithMap(quote).norm.trim().split(' ').filter(Boolean)
+  for (const n of [words.length, 6, 4]) {
+    if (n > words.length || n < 3) continue
+    const q = words.slice(0, n).join(' ')
+    let best: number | null = null
+    for (let k = f.norm.indexOf(q); k >= 0; k = f.norm.indexOf(q, k + 1)) {
+      if (k > 0 && f.norm[k - 1] !== ' ') continue
+      const pos = f.at[k]
+      if (pos < lo || pos >= hi) continue
+      if (best === null || Math.abs(pos - near) < Math.abs(best - near)) best = pos
+    }
+    if (best !== null) return best
+  }
+  return null
+}
+
+/**
+ * Each topic's verbatim section of the lesson: cut where the model's quote (`from`) begins instead of at a paragraph
+ * edge. A quote may sit in the topic's first paragraph or the one before it; one that cannot be found there falls
+ * back to the first paragraph's start. The sections follow one another, so together they cover the lesson once.
+ */
+export function topicExcerpts(paras: Para[], topics: { start: number; end: number; from?: string }[]): string[] {
+  if (!topics.length) return []
+  const full = paras.map((p) => p.text).join('\n\n')
+  const startOf = new Map<number, number>()
+  const endOf = new Map<number, number>()
+  let off = 0
+  for (const p of paras) {
+    startOf.set(p.id, off)
+    endOf.set(p.id, off + p.text.length)
+    off += p.text.length + 2
+  }
+  const paraStart = (id: number): number => startOf.get(id) ?? startOf.get(paras.find((p) => p.id >= id)?.id ?? -1) ?? full.length
+  const paraEnd = (id: number): number => endOf.get(id) ?? endOf.get([...paras].reverse().find((p) => p.id <= id)?.id ?? -1) ?? full.length
+  const f = foldWithMap(full)
+  // A quote found right after a line's "## " or "- " marker starts at the line instead, keeping the marker.
+  const lineStart = (pos: number, lo: number): number => {
+    let k = pos
+    while (k > lo && full[k - 1] !== '\n' && !/[\p{L}\p{N}]/u.test(full[k - 1])) k--
+    return k === 0 || full[k - 1] === '\n' ? k : pos
+  }
+  const cuts: number[] = []
+  topics.forEach((t, i) => {
+    const def = paraStart(t.start)
+    if (i === 0) { cuts.push(0); return }
+    const lo = Math.max(cuts[i - 1] + 1, paraStart(t.start - 1))
+    const hi = paraEnd(t.end)
+    const found = t.from ? findQuote(f, t.from, lo, hi, def) : null
+    cuts.push(found !== null ? lineStart(found, lo) : Math.max(def, cuts[i - 1] + 1))
+  })
+  return topics.map((t, i) => full.slice(cuts[i], i + 1 < topics.length ? cuts[i + 1] : Math.max(paraEnd(t.end), cuts[i])).trim())
 }
 
 function tokenSet(s: string): Set<string> {

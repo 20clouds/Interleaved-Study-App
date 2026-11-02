@@ -1,4 +1,4 @@
-import type { Provider, Settings } from './types'
+import type { Provider, Settings, ThinkingLevel } from './types'
 
 export interface ProviderInfo {
   id: Provider
@@ -16,15 +16,57 @@ export const PROVIDERS: ProviderInfo[] = [
 
 export const providerInfo = (p: Provider): ProviderInfo => PROVIDERS.find((x) => x.id === p) ?? PROVIDERS[0]
 
-/** Preset model IDs per provider; the first one is the default when switching to that provider. */
+/**
+ * Preset model IDs per provider; the first one is the default when switching to that provider. Gemini's default is
+ * the Flash-Lite model: it accepts minimal thinking and answers an organize window in about 2 s, where Gemma takes
+ * about 10 s and Gemini 3.8 Flash (no minimal thinking, often overloaded with HTTP 503) far longer.
+ */
 export const MODEL_PRESETS: Record<Provider, string[]> = {
-  gemini: ['gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'],
+  gemini: ['gemini-3.5-flash-lite', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-3.8-flash', 'gemini-flash-latest'],
   anthropic: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'],
   openai: ['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra', 'gpt-5.6-terra', 'gpt-5.6-luna']
 }
 
-/** Rough request duration before any were measured; used only for time estimates. */
-export const DEFAULT_REQUEST_MS = 8000
+const ALL_LEVELS: ThinkingLevel[] = ['minimal', 'low', 'medium', 'high']
+const NO_MINIMAL: ThinkingLevel[] = ['low', 'medium', 'high']
+
+/**
+ * The thinking levels each Gemini model accepts, fastest first, and the level it uses when none is sent (null when
+ * Google doesn't say). From the Gemini API thinking docs (ai.google.dev/gemini-api/docs/thinking), checked 2026-11-02,
+ * and confirmed level by level on the presets: gemini-flash-latest, which the docs leave out, rejects minimal like
+ * gemini-3.8-flash.
+ */
+export const GEMINI_THINKING: Record<string, { levels: ThinkingLevel[]; dflt: ThinkingLevel | null }> = {
+  'gemini-3.5-flash-lite': { levels: ALL_LEVELS, dflt: 'minimal' },
+  'gemini-3.8-flash': { levels: NO_MINIMAL, dflt: 'medium' },
+  'gemini-flash-latest': { levels: NO_MINIMAL, dflt: null },
+  'gemini-3.6-flash': { levels: ALL_LEVELS, dflt: 'medium' },
+  'gemini-4-argon': { levels: NO_MINIMAL, dflt: 'medium' },
+  'gemini-3.1-pro-preview': { levels: NO_MINIMAL, dflt: 'high' },
+  'gemini-3.1-flash-lite-image': { levels: ['minimal', 'high'], dflt: 'minimal' },
+  'gemini-3-flash-preview': { levels: ALL_LEVELS, dflt: 'high' },
+  'gemini-3-pro-preview': { levels: ['low', 'high'], dflt: 'high' },
+  'gemini-2.5-pro': { levels: NO_MINIMAL, dflt: null },
+  'gemini-2.5-flash': { levels: NO_MINIMAL, dflt: null },
+  'gemini-2.5-flash-lite': { levels: NO_MINIMAL, dflt: null }
+}
+
+/**
+ * What a Gemini model accepts. Gemma 4 has only an off/on switch (ai.google.dev/gemma/docs/core/gemma_on_gemini_api).
+ * A model in neither list is offered every level; one it rejects is dropped for that request.
+ */
+export function geminiThinking(model: string): { levels: ThinkingLevel[]; dflt: ThinkingLevel | null; known: boolean } {
+  if (Object.hasOwn(GEMINI_THINKING, model)) return { ...GEMINI_THINKING[model], known: true }
+  if (/^gemma-4/i.test(model)) return { levels: ['minimal', 'high'], dflt: null, known: true }
+  return { levels: ALL_LEVELS, dflt: null, known: false }
+}
+
+/** The level to send to a Gemini model: the one chosen for it while the model accepts it, else its fastest. */
+export function geminiLevelFor(ai: Pick<Settings['ai'], 'model' | 'thinking'>, model: string = ai.model): ThinkingLevel {
+  const { levels } = geminiThinking(model)
+  const chosen = ai.thinking && Object.hasOwn(ai.thinking, model) ? ai.thinking[model] : undefined
+  return chosen && levels.includes(chosen) ? chosen : levels[0]
+}
 
 export const DEFAULT_BASE_URLS: Record<Provider, string> = {
   gemini: 'https://generativelanguage.googleapis.com',
@@ -37,14 +79,16 @@ export const SOUNDS = ['Glass', 'Ping', 'Basso', 'Blow', 'Bottle', 'Frog', 'Funk
 export const DEFAULT_SETTINGS: Settings = {
   ai: {
     provider: 'gemini',
-    model: 'gemma-4-31b-it',
+    model: 'gemini-3.5-flash-lite',
     lastModels: {},
     endpoint: 'auto',
     baseUrls: { ...DEFAULT_BASE_URLS },
     includeModelInCacheKey: false,
     windowTokens: 3500,
     maxOutputTokens: 1200,
-    minimalThinking: true
+    minimalThinking: true,
+    thinking: {},
+    defaultsRev: 2
   },
   study: { minutes: 30, useSuggested: false, pace: 120 },
   pomo: { work: 25, brk: 5, long: 15, cycles: 4, perTopic: 'one', n: 3, minutes: 40, autoStartNext: false },
@@ -81,6 +125,15 @@ export function mergeSettings(stored: unknown): Settings {
   }
   // Stored or restored addresses that fail the safety check fall back to the official endpoint.
   for (const [p, u] of Object.entries(out.ai.baseUrls)) if (typeof u !== 'string' || baseUrlProblem(u)) out.ai.baseUrls[p as Provider] = DEFAULT_BASE_URLS[p as Provider] ?? ''
+  // Revision 2 made Flash-Lite the Gemini default (about 2 s a request against far longer, often HTTP 503, on
+  // gemini-3.8-flash): settings saved before it move to it once, after which the person's choice stands.
+  const rev = isObj(stored) && isObj(stored.ai) && typeof stored.ai.defaultsRev === 'number' ? stored.ai.defaultsRev : 0
+  if (rev < 2) {
+    const flashLite = MODEL_PRESETS.gemini[0]
+    if (out.ai.provider === 'gemini') out.ai.model = flashLite
+    out.ai.lastModels = { ...out.ai.lastModels, gemini: flashLite }
+  }
+  out.ai.defaultsRev = DEFAULT_SETTINGS.ai.defaultsRev
   // Client-side rate limits were removed: the provider's own limit now pauses the queue instead.
   for (const k of ['rpm', 'tpm', 'rpd', 'utilization', 'countInputOnly']) delete (out.ai as unknown as Record<string, unknown>)[k]
   return out

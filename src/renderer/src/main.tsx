@@ -1,13 +1,7 @@
-import '@fontsource/newsreader/400.css'
-import '@fontsource/newsreader/500.css'
-import '@fontsource/newsreader/400-italic.css'
-import '@fontsource/schibsted-grotesk/400.css'
-import '@fontsource/schibsted-grotesk/500.css'
-import '@fontsource/schibsted-grotesk/600.css'
 import './style.css'
 import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { AppProvider, useApp, type View } from './state'
+import { AppProvider, applyAccent, useAction, useApp, type View } from './state'
 import { api, errMsg } from './api'
 import { Icon } from './icons'
 import { Ribbon } from './components/Ribbon'
@@ -120,6 +114,7 @@ function DropTarget() {
 
 function TitleBar() {
   const { view, setView, queue } = useApp()
+  const act = useAction()
   const busy = queue && (queue.running || queue.queued > 0)
   return (
     <div className="titlebar">
@@ -135,6 +130,12 @@ function TitleBar() {
           {queue.failed.length ? <span className="overdue">{queue.failed.length} failed</span> : null}
           {queue.queued ? <span className="num">{queue.chunksDone}/{queue.chunksTotal || queue.queued} organizing</span> : null}
           {queue.rateLimit ? <span className="overdue">rate limit · paused</span> : queue.userPaused ? <span>paused</span> : null}
+        </button>
+      ) : null}
+      {busy ? (
+        <button className="qpill" title="Cancel all AI requests" aria-label="Cancel all AI requests"
+          onClick={() => void act(() => api.cancelAi(), 'AI requests cancelled')}>
+          <Icon.close /> Cancel
         </button>
       ) : null}
     </div>
@@ -206,6 +207,11 @@ function Shell() {
     </div>
   )
 }
+
+// Set before the first render so nothing paints in the fallback colors. On macOS the window behind the page is
+// the system sidebar material, which the title bar and the Topics sidebar let show through.
+applyAccent(api.accent)
+if (navigator.userAgent.includes('Macintosh')) document.documentElement.classList.add('vibrant')
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

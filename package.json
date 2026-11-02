@@ -26,8 +26,6 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@fontsource/newsreader": "^5.1.0",
-    "@fontsource/schibsted-grotesk": "^5.1.0",
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^20.16.0",
     "@types/react": "^18.3.11",

@@ -34,6 +34,7 @@ Built with Electron, React, TypeScript and SQLite.
 - Import single files or whole folders: `.md`, `.markdown` and `.txt` are read natively. `.pdf` (via pdf.js) and `.docx` (via mammoth) are best-effort.
 - Free local preprocessing: normalizes text, strips junk, numbers paragraphs, detects headings and creates provisional topics before any AI call.
 - The AI organizes each lesson into named topics with a summary, key terms, prerequisites and difficulty. The model never rewrites your text; topic ranges point back to your original paragraphs.
+- **Source in file:** click a topic and the side panel shows the exact, verbatim part of the lesson the AI assigned to it. The AI quotes each topic's opening words and the app cuts your own text there, so a topic can start partway through a paragraph. (Lessons organized before this feature show the topic's paragraphs until you re-organize them.)
 - Re-importing a changed file keeps study history wherever the topics still match. Unchanged files (same content hash) are never re-analyzed.
 
 **Study sessions**
@@ -67,8 +68,10 @@ Built with Electron, React, TypeScript and SQLite.
 - One persisted queue that sends one request at a time, as fast as the provider allows. There are no rate-limit settings to configure.
 - **When the provider's rate limit is reached, everything pauses at once.** You get a macOS notification and a banner on every page with the provider's message and, when the provider gives one, how long to wait. **Continue** picks up exactly where it stopped. See [When you hit a rate limit](#when-you-hit-a-rate-limit).
 - Exponential backoff that honors `Retry-After` on 5xx and network errors, one repair retry for malformed JSON, and a result cache.
-- An estimate before every run, live progress, pause/resume, and retry for failed jobs.
+- The number of requests and tokens before every run, live progress, pause/resume, and retry for failed jobs. There are no time estimates.
+- **Cancel any AI request:** a Cancel button in the title bar (everything), on the Queue page (the running request, or all), while a quiz is being written or graded, and while a spreadsheet is being read. The request in flight is aborted at once. A lesson whose organizing is cancelled keeps the topics it had, and finished windows stay cached for next time.
 - "Test model" checks whether a model supports system instructions, JSON mode and minimal thinking (low effort on Claude and OpenAI), and remembers the result for that model. For Claude it also checks the server-side refusal fallback.
+- **Gemini thinking level:** a **Thinking** menu in Settings lists only the levels the selected Gemini model accepts (from Google's thinking docs, confirmed on each preset) and remembers your choice for each model. Gemma 4 shows Off and On, its only two settings. See [Gemini thinking levels](#gemini-thinking-levels).
 
 ---
 
@@ -91,8 +94,8 @@ Built with Electron, React, TypeScript and SQLite.
 
 ```bash
 # 1. Clone
-git clone https://github.com/Skygamer10/interleaved-study.git
-cd interleaved-study
+git clone https://github.com/20clouds/Interleaved-Study-App.git
+cd Interleaved-Study-App
 
 # 2. Install dependencies
 #    (postinstall rebuilds better-sqlite3 for Electron's Node version automatically)
@@ -111,8 +114,8 @@ On first launch:
 
 1. Open **Settings** (`⌘,`), choose a provider under **AI provider**, and paste that provider's API key. If you don't have a key yet, Gemini is free.
 2. Pick a model from the list (it matches the provider you chose) and click **Test model**.
-3. Go to **Board** (`⌘1`), then drag in a file or folder, or use **Import**.
-4. Review the AI estimate and start organizing. You can follow progress on the **Queue** page (`⌘5`).
+3. Go to **Topics** (`⌘1`), then drag in a file or folder, or choose **File → Import Lessons** (`⌘O`).
+4. Review the request and token count and start organizing. You can follow progress on the **Queue** page (`⌘5`).
 5. Start a session from **Session** (`⌘2`), or press `⌘⇧S` for the next suggested session.
 
 ---
@@ -123,7 +126,7 @@ Open **Settings → AI provider** and pick one from the dropdown. The model list
 
 | Provider | Where to get a key | Cost | Default model | Other presets |
 |---|---|---|---|---|
-| **Google Gemini** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | **Free tier available**, no credit card needed | `gemma-4-31b-it` | `gemma-4-26b-a4b-it`, `gemini-3.8-flash`, `gemini-3.5-flash-lite`, `gemini-flash-latest` |
+| **Google Gemini** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | **Free tier available**, no credit card needed | `gemini-3.5-flash-lite` | `gemma-4-31b-it`, `gemma-4-26b-a4b-it`, `gemini-3.8-flash`, `gemini-flash-latest` |
 | **Anthropic Claude** | [platform.claude.com/settings/keys](https://platform.claude.com/settings/keys) | Pay per token | `claude-opus-5-5` | `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-fable-5-1` |
 | **OpenAI (ChatGPT)** | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) | Pay per token | `gpt-6-luna` | `gpt-6.1-sol`, `gpt-6-astra`, `gpt-5.6-terra`, `gpt-5.6-luna` |
 
@@ -139,6 +142,19 @@ A Claude.ai Pro/Max plan or a ChatGPT Plus/Pro plan does **not** include API acc
 
 - **Claude** is called through the official [`@anthropic-ai/sdk`](https://www.npmjs.com/package/@anthropic-ai/sdk) (Messages API). Requests ask for low effort to save tokens. On `claude-opus-5-5`, `claude-sonnet-5-5` and `claude-fable-5-1`, the app also turns on Anthropic's server-side refusal fallback, so a request one model declines is retried on another Claude model instead of failing. For organizing many lessons, `claude-haiku-5-5` costs much less than the default Opus model.
 - **OpenAI** is called through the Responses API with JSON mode and low reasoning effort. Requests are sent with `store: false`, so OpenAI keeps no copy of the conversation.
+
+### Gemini thinking levels
+
+More thinking gives the model longer to reason before it answers: slower, and more output tokens. Settings → **Thinking** lists only what the selected model accepts and starts at its fastest level.
+
+| Model | Levels it accepts | Its own default |
+|---|---|---|
+| `gemini-3.5-flash-lite` | minimal, low, medium, high | minimal |
+| `gemini-3.8-flash` | low, medium, high | medium |
+| `gemini-flash-latest` | low, medium, high (it rejects minimal, like 3.8 Flash) | not stated |
+| `gemma-4-31b-it`, `gemma-4-26b-a4b-it` | minimal (thinking off), high (thinking on) | not stated |
+
+Sources: [Gemini thinking docs](https://ai.google.dev/gemini-api/docs/thinking), [Run Gemma with the Gemini API](https://ai.google.dev/gemma/docs/core/gemma_on_gemini_api), and a probe of each level on each preset (November 2026). On one organize window of a lecture transcript, Flash-Lite took about 2-4 s at minimal, low or medium and 8.8 s at high. A model that isn't in the table is offered every level; a level it rejects is skipped for that request.
 
 ### When you hit a rate limit
 
@@ -337,8 +353,10 @@ Generated folders, which are git-ignored: `node_modules/`, `out/` (compiled app)
 - **Storage.** SQLite through `better-sqlite3`, with WAL and FTS5. Raw document text is kept in its own table, so list queries never load it. If the native module can't load, the app falls back to a JSON-file store and shows the reason in Settings.
 - **Scheduling.** Each rating maps to an evidence value (lost 0.1, shaky 0.4, okay 0.7, solid 1.0). A quiz score is weighted twice as heavily as the self-rating. Stability grows or shrinks from that evidence, and the next due date follows from the new stability. Mastery and status are computed when read, not stored.
 - **Providers.** `src/main/ai/provider.ts` has one adapter per wire API: Gemini `generateContent` and Interactions (raw `fetch`), Claude Messages (the official Anthropic SDK, with its built-in retries off because the queue handles retries), and OpenAI Responses (raw `fetch`). Every adapter returns the same result shape, so the queue, cache and rate-limit pause work the same for all three.
-- **AI fallbacks.** Some models reject certain request features. If a request gets HTTP 400, the app retries without the feature the error names, in this order: Claude's refusal fallback, then minimal thinking / low effort, then JSON mode, then the system instruction. It remembers what each model accepted. Claude has no schema-free JSON mode, so the prompts ask for JSON and every reply goes through robust parsing with one repair retry.
-- **Rate limits.** An HTTP 429 from any provider throws a dedicated error. The queue puts the job back unchanged, sets a persisted pause with the provider's message and `Retry-After`, and notifies you. `resume()` clears it. Time estimates come from a moving average of measured request times, not from configured limits.
+- **AI fallbacks.** Some models reject certain request features. If a request gets HTTP 400, the app retries without the feature the error names, in this order: Claude's refusal fallback, then the thinking setting (a chosen Gemini medium or high level goes at the model's own level; minimal steps down to low, then to none; Claude and OpenAI drop low effort), then JSON mode, then the system instruction. It remembers what each model accepted. Claude has no schema-free JSON mode, so the prompts ask for JSON and every reply goes through robust parsing with one repair retry.
+- **Rate limits.** An HTTP 429 from any provider throws a dedicated error. The queue puts the job back unchanged, sets a persisted pause with the provider's message and `Retry-After`, and notifies you. `resume()` clears it.
+- **Cancelling.** Each running job gets an `AbortController`; `Queue.cancel()` deletes the matching jobs, aborts the request in flight (fetch and the Anthropic SDK both take the signal) and rejects anything waiting with `Cancelled`. A cancel that lands after the answer arrived still wins, so a cancelled job never stores its result.
+- **Source excerpts.** The organize prompt asks for each topic's first 6-10 words (`from`). `topicExcerpts()` in `src/main/organize.ts` finds that quote in the lesson's text (ignoring case, punctuation and spacing, in the topic's first paragraph or the one before) and cuts there; a quote it cannot find falls back to the paragraph edge. The excerpt is stored as its own text (`excerpt:<topic id>`).
 - **Token headroom.** Claude and OpenAI reasoning models count thinking tokens against the output cap, so their requests reserve extra room on top of **Max output per request**.
 
 ---
@@ -369,9 +387,11 @@ None of these files are inside the repository, so committing and pushing never u
 
 | Shortcut | Action |
 |---|---|
+| `⌘O` | Import lesson files (into the open course, or a new one) |
+| `⌘⇧O` | Import a folder of lessons |
 | `⌘⇧S` | Start the next suggested session |
 | `⌘⇧P` | Pause or resume the timer |
-| `⌘1` | Board |
+| `⌘1` | Topics |
 | `⌘2` | Session |
 | `⌘3` | Plan |
 | `⌘4` | Progress |
@@ -381,6 +401,9 @@ None of these files are inside the repository, so committing and pushing never u
 ---
 
 ## Troubleshooting
+
+**Organizing or quizzes take a long time, or the Queue says the model is "overloaded (HTTP 503)"**
+Use `gemini-3.5-flash-lite`, the Gemini default. Measured on a real 6,500-word lecture transcript, it organized each window in about 2 seconds with minimal thinking. `gemini-3.8-flash` doesn't accept minimal thinking, so every request also spends time thinking, and it is often overloaded: Google answers HTTP 503 ("high demand") and the queue backs off and retries up to 6 times. Gemma models took about 10 seconds per window.
 
 **`better-sqlite3` was compiled against a different Node.js version (`NODE_MODULE_VERSION` mismatch)**
 The native module must be built for Electron's Node version, not your system Node. Run:
