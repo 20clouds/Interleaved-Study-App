@@ -10,7 +10,7 @@ export interface Section { id: string; name: string; color: string | null; items
 
 export type Col = 'status' | 'time' | 'spent' | 'last' | 'due' | 'mastery'
 export const COLS: { id: Col; label: string; w: string }[] = [
-  { id: 'status', label: 'Status', w: '98px' }, { id: 'time', label: 'Time', w: '42px' }, { id: 'spent', label: 'Spent', w: '50px' },
+  { id: 'status', label: 'Status', w: '84px' }, { id: 'time', label: 'Time', w: '42px' }, { id: 'spent', label: 'Spent', w: '50px' },
   { id: 'last', label: 'Last', w: '58px' }, { id: 'due', label: 'Next due', w: '70px' }, { id: 'mastery', label: 'Mastery', w: '100px' }
 ]
 
@@ -44,8 +44,8 @@ export const DEFAULT_PREFS: Prefs = {
 export const SWATCHES = ['h:25', 'h:50', 'h:75', 'h:100', 'h:130', 'h:155', 'h:180', 'h:200', 'h:225', 'h:250', 'h:275', 'h:300', 'h:325', 'h:350', 'n']
 export function colorCss(v: string | null | undefined): string | undefined {
   if (!v) return undefined
-  if (v === 'n') return 'var(--muted)'
-  if (v.startsWith('h:')) return `oklch(var(--c-l) 0.09 ${Number(v.slice(2)) || 0})`
+  if (v === 'n') return 'var(--ink-3)'
+  if (v.startsWith('h:')) return `oklch(var(--c-l) var(--c-ch) ${Number(v.slice(2)) || 0})`
   return v
 }
 

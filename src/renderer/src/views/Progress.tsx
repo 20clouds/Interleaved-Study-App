@@ -73,7 +73,6 @@ export function Progress() {
   return (
     <div className="page">
       <div className="page-inner">
-        <h1>Progress</h1>
         <div className="statline">
           <div className="stat"><b>{fmtMin(stats.total)}</b><span>studied in total</span></div>
           <div className="stat"><b>{fmtMin(stats.weekMin)}</b><span>last 7 days</span></div>

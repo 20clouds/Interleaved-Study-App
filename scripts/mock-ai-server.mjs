@@ -36,6 +36,9 @@ function deadlinesAnswer(prompt) {
 }
 
 export function defaultAnswer(system, prompt) {
+  if (/turn a study file into its text/i.test(system)) {
+    return JSON.stringify({ markdown: '# Photosynthesis\n\nPlants turn light, water and carbon dioxide into sugar and oxygen inside their chloroplasts.\n\n## Light reactions\n\nThe light reactions split water and make ATP and NADPH on the thylakoid membranes of the chloroplast.\n\n## Calvin cycle\n\nThe Calvin cycle uses ATP and NADPH to fix carbon dioxide into sugar in the stroma.' })
+  }
   if (/extract deadlines/i.test(system)) return deadlinesAnswer(prompt)
   if (/organize study material/i.test(system + prompt)) return organizeAnswer(prompt) ?? '{"topics":[]}'
   if (/quiz/i.test(system)) {
@@ -66,7 +69,8 @@ export function startMockServer(opts = {}) {
     rejectFallbacks: !!opts.rejectFallbacks,
     rejectSchema: opts.rejectSchema ?? null, // Gemini: 'nojson' | 'unknown' | 'keyword' | 'unsupported' | 'complex' | 'bare'
     rejectMinimal: opts.rejectMinimal ?? false, // Gemini: reject thinking level minimal (true, or 'bare' for a bare 400)
-    maxOutputLimit: opts.maxOutputLimit ?? null // Gemini: reject maxOutputTokens / max_output_tokens above this
+    maxOutputLimit: opts.maxOutputLimit ?? null, // Gemini: reject maxOutputTokens / max_output_tokens above this
+    rejectFiles: opts.rejectFiles ?? null // Gemini: 'mime' | 'bare' — refuse requests carrying a file part
   }
   const server = http.createServer((req, res) => {
     let raw = ''
@@ -75,18 +79,27 @@ export function startMockServer(opts = {}) {
       let body = {}
       try { body = JSON.parse(raw || '{}') } catch { /* ignore */ }
       const urlPath = req.url.split('?')[0]
+      // Manual trials: POST /_mock { rejectFiles, ... } changes behaviour; GET /_mock lists requests and the files they carried.
+      if (urlPath === '/_mock') {
+        if (req.method === 'POST') Object.assign(state, body)
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        return res.end(JSON.stringify({ rejectFiles: state.rejectFiles, requests: state.requests.map((r) => ({ url: r.url, file: r.file })) }))
+      }
       const interactions = urlPath.endsWith('/v1beta/interactions')
       const gc = /\/v1beta\/models\/[^/]+:generateContent$/.test(urlPath)
       const messages = urlPath.endsWith('/v1/messages')
       const responses = urlPath.endsWith('/v1/responses')
       const key = req.headers['x-goog-api-key'] || req.headers['x-api-key'] || (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || undefined
-      let system = '', prompt = ''
+      let system = '', prompt = '', file = null
       if (gc) {
         system = body.systemInstruction?.parts?.map((p) => p.text).join('') ?? ''
-        prompt = body.contents?.[0]?.parts?.map((p) => p.text).join('') ?? ''
+        prompt = body.contents?.[0]?.parts?.map((p) => p.text ?? '').join('') ?? ''
+        file = body.contents?.[0]?.parts?.find((p) => p.inlineData)?.inlineData
       } else if (interactions) {
         system = body.system_instruction ?? ''
-        prompt = body.input ?? ''
+        prompt = Array.isArray(body.input) ? body.input.filter((p) => p.type === 'text').map((p) => p.text).join('') : (body.input ?? '')
+        const f = Array.isArray(body.input) ? body.input.find((p) => p.type === 'document' || p.type === 'image') : null
+        file = f ? { mimeType: f.mime_type, data: f.data } : null
       } else if (messages) {
         system = typeof body.system === 'string' ? body.system : (body.system ?? []).map((b) => b.text).join('')
         const c = body.messages?.[0]?.content
@@ -95,7 +108,7 @@ export function startMockServer(opts = {}) {
         system = body.instructions ?? ''
         prompt = typeof body.input === 'string' ? body.input : ''
       }
-      state.requests.push({ url: req.url, body, key })
+      state.requests.push({ url: req.url, body, key, file: file ? { mimeType: file.mimeType, bytes: Buffer.from(file.data ?? '', 'base64').length } : null })
       const send = (status, obj, headers = {}) => {
         res.writeHead(status, { 'Content-Type': 'application/json', ...headers })
         res.end(typeof obj === 'string' ? obj : JSON.stringify(obj))
@@ -107,6 +120,11 @@ export function startMockServer(opts = {}) {
       if (messages && state.rejectThinking && body.output_config?.effort) return bad('output_config.effort: effort is not supported on this model')
       if (responses && state.rejectThinking && body.reasoning) return bad("Unsupported parameter: 'reasoning.effort' is not supported with this model.")
       if (responses && state.rejectJsonMode && body.text?.format?.type === 'json_object') return bad("'text.format' of type 'json_object' is not supported with this model.")
+      // rejectFiles: 'mime' answers a file part with an explicit unsupported-MIME 400, 'bare' with a generic one.
+      if ((gc || interactions) && file && state.rejectFiles) {
+        const message = state.rejectFiles === 'mime' ? `Unsupported MIME type: ${file.mimeType} is not supported for this model.` : 'Request contains an invalid argument.'
+        return send(400, interactions ? { error: { code: 'invalid_request', message } } : { error: { code: 400, message, status: 'INVALID_ARGUMENT' } })
+      }
       if (gc && state.rejectGenerateContent) return send(400, { error: { code: 400, message: 'Use the Interactions API for this model', status: 'INVALID_ARGUMENT' } })
       if (gc && state.rejectThinking && body.generationConfig?.thinkingConfig) {
         return send(400, { error: { code: 400, message: 'thinking_level is not supported for this model', status: 'INVALID_ARGUMENT' } })

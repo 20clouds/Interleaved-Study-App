@@ -248,18 +248,17 @@ export function Plan() {
   return (
     <div className="page">
       <div className="page-inner">
-        <h1>Plan</h1>
         <div className="cols">
-          <div>
-            <h2>Today</h2>
-            <div className="statline" style={{ marginBottom: 10 }}>
+          <section className="block">
+            <div className="sec-h"><h2>Daily goal</h2></div>
+            <div className="statline">
               <div className="stat"><b>{goal.kind === 'minutes' ? fmtMin(done) : done}</b><span>of {goal.kind === 'minutes' ? fmtMin(goal.value) : `${goal.value} topics`} goal</span></div>
               <div className="stat"><b>{streak.current}</b><span>day streak{streak.restUsed ? `, ${streak.restUsed} rest day${streak.restUsed > 1 ? 's' : ''}` : ''}</span></div>
               <div className="stat"><b>{streak.best}</b><span>best streak</span></div>
             </div>
-            <div className="goalbar"><i style={{ width: `${Math.min(100, (100 * done) / Math.max(1, goal.value))}%` }} /></div>
-            <p className="help">The goal is a guide, not a rule. {settings.goal.restDaysPerWeek} rest day{settings.goal.restDaysPerWeek === 1 ? '' : 's'} per week keep a streak alive.</p>
-            <div className="row-flex">
+            <div className="meter"><i style={{ width: `${Math.min(100, (100 * done) / Math.max(1, goal.value))}%` }} /></div>
+            <p className="help" style={{ marginTop: 10 }}>The goal is a guide, not a rule. {settings.goal.restDaysPerWeek} rest day{settings.goal.restDaysPerWeek === 1 ? '' : 's'} per week keep a streak alive.</p>
+            <div className="sentence">
               <span>Today’s goal</span>
               <select className="input" style={{ width: 'auto' }} value={goal.kind} onChange={(e) => void act(() => api.setDayGoal({ kind: e.target.value as 'minutes' | 'topics', value: goal.value }))}>
                 <option value="minutes">minutes</option><option value="topics">topics</option>
@@ -267,7 +266,7 @@ export function Plan() {
               <input className="input num" type="number" min={1} style={{ width: 70 }} value={goal.value} onChange={(e) => void act(() => api.setDayGoal({ kind: goal.kind, value: Math.max(1, Number(e.target.value) || 1) }))} aria-label="Goal for today" />
               {todayRec?.goal && <button className="btn ghost small" onClick={() => void act(() => api.setDayGoal(null))}>Use default</button>}
             </div>
-            <div className="row-flex" style={{ marginTop: 8 }}>
+            <div className="sentence">
               <span>Default goal</span>
               <select className="input" style={{ width: 'auto' }} value={settings.goal.kind} onChange={(e) => void saveSettings({ goal: { kind: e.target.value as 'minutes' | 'topics' } })}>
                 <option value="minutes">minutes</option><option value="topics">topics</option>
@@ -276,12 +275,12 @@ export function Plan() {
               <span>rest days per week</span>
               <input className="input num" type="number" min={0} max={3} style={{ width: 54 }} value={settings.goal.restDaysPerWeek} onChange={(e) => void saveSettings({ goal: { restDaysPerWeek: Math.max(0, Math.min(3, Number(e.target.value) || 0)) } })} aria-label="Rest days per week" />
             </div>
-          </div>
-          <div>
-            <div className="row-flex" style={{ marginBottom: 8 }}>
-              <h2 style={{ margin: 0, marginRight: 'auto' }}>Deadlines</h2>
-              <button className="btn" onClick={() => { setNewDate(undefined); setForm('new') }}><Icon.plus /> Add</button>
-              <button className="btn" onClick={() => void act(async () => { const s = await api.openSheet(); if (s) { setManual(false); setSheet(s) } })}><Icon.upload /> Import .xlsx or .csv</button>
+          </section>
+          <section className="block">
+            <div className="sec-h">
+              <h2>Deadlines</h2>
+              <span className="sec-actions"><button className="btn" onClick={() => { setNewDate(undefined); setForm('new') }}><Icon.plus /> Add</button>
+              <button className="btn" onClick={() => void act(async () => { const s = await api.openSheet(); if (s) { setManual(false); setSheet(s) } })}><Icon.upload /> Import .xlsx or .csv</button></span>
             </div>
             {upcoming.length === 0 ? <p className="muted">No upcoming deadlines. Linked deadlines give their topics priority as the date approaches (from three weeks out).</p> : (
               <div className="agenda-scroll"><div className="agenda">
@@ -301,7 +300,7 @@ export function Plan() {
               </div></div>
             )}
             <label className="check" style={{ marginTop: 8 }}><input type="checkbox" checked={showPast} onChange={(e) => setShowPast(e.target.checked)} /><span className="small muted">Show past deadlines</span></label>
-          </div>
+          </section>
         </div>
         <div className="block">
           <Calendar deadlines={data.deadlines} studied={studied} onAdd={(d) => { setNewDate(d); setForm('new') }} onOpen={(d) => setForm(d)} />

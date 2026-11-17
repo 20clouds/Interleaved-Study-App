@@ -7,6 +7,7 @@ import type { MenuCommand } from '../../../shared/api'
 import { api, errMsg } from '../api'
 import { addPaths, useApp } from '../state'
 import { Modal } from '../ui'
+import { DeliveryTag, deliveryFor, useFileSupport } from './FileSupport'
 
 type Handler = {
   /** Import into `courseId`; lessons go nowhere else. */
@@ -29,7 +30,8 @@ function merge(a: ImportResult, b: ImportResult): ImportResult {
 }
 
 export function ImportFlow() {
-  const { toast, view, setView, courseWizard, setCourseWizard } = useApp()
+  const { toast, view, setView, courseWizard, setCourseWizard, data } = useApp()
+  const files = useFileSupport()
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
   const [estimate, setEstimate] = useState<{ est: Estimate; docIds?: string[] } | null>(null)
@@ -122,6 +124,19 @@ export function ImportFlow() {
           <p>
             {estimate.est.docs} lesson{estimate.est.docs === 1 ? '' : 's'} ready. The AI names topics, groups units, writes summaries and suggests study times.
           </p>
+          {(() => {
+            const docs = (data?.docs ?? []).filter((d) => estimate.docIds?.includes(d.id))
+            if (!docs.length || !files) return null
+            return (
+              <table className="table import-files">
+                <thead><tr><th>Lesson</th><th>How {files.provider} gets it</th></tr></thead>
+                <tbody>{docs.map((d) => {
+                  const dl = deliveryFor(d, files)
+                  return <tr key={d.id}><td>{d.fileName || d.title}</td><td>{dl ? <><DeliveryTag d={dl} /><div className="help small">{dl.detail}</div></> : null}</td></tr>
+                })}</tbody>
+              </table>
+            )
+          })()}
           <div className="statline">
             <div className="stat"><b>~{estimate.est.requests}</b><span>requests</span></div>
             <div className="stat"><b>~{estimate.est.tokens.toLocaleString()}</b><span>tokens</span></div>

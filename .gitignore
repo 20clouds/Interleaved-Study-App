@@ -1,12 +1,11 @@
 node_modules
-out
 dist
+src-tauri/target
+src-tauri/gen
 *.log
 .DS_Store
-coverage
 .env
 .env.*
 *.sqlite
 *.sqlite-*
-api-key.bin
-vendor
+.taste-skill

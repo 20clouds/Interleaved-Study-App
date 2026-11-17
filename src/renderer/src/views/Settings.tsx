@@ -1,9 +1,10 @@
-// Settings: API key (Keychain), model + Test model with capability probing, limits, study and Pomodoro,
-// notifications, appearance, backup, and a capability check.
+// Settings: AI provider (an API key in the Keychain, or a Claude scheduled task with its mailbox), model + Test
+// model with capability probing, limits, study and Pomodoro, notifications, appearance, backup, capability check.
 import { useEffect, useState } from 'react'
-import type { Caps, Provider, TestResult, ThinkingLevel } from '../../../shared/types'
+import type { Caps, Provider, SecretName, TestResult, ThinkingLevel } from '../../../shared/types'
 import { DEFAULT_BASE_URLS, MODEL_PRESETS, PROVIDERS, SOUNDS, geminiLevelFor, geminiThinking, providerInfo } from '../../../shared/defaults'
 import { api, errMsg } from '../api'
+import { FileSupportList, useFileSupport } from '../components/FileSupport'
 import { useAction, useApp } from '../state'
 import { Icon } from '../icons'
 import { Spinner } from '../ui'
@@ -57,7 +58,7 @@ function BaseUrlField({ value, fallback, onSave }: { value: string; fallback: st
   )
 }
 
-const THINK_LABEL: Record<Provider, string> = { gemini: 'Minimal thinking', anthropic: 'Low effort', openai: 'Low reasoning effort' }
+const THINK_LABEL: Record<Provider, string> = { gemini: 'Minimal thinking', anthropic: 'Low effort', openai: 'Low reasoning effort', routine: 'Low effort' }
 
 const LEVEL_NAME: Record<ThinkingLevel, string> = { minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High' }
 
@@ -68,6 +69,105 @@ function levelLabel(model: string, l: ThinkingLevel, levels: ThinkingLevel[], df
   return l === dflt ? `${name} (model default)` : name
 }
 
+/** A secret typed once and saved to the Keychain; afterwards only "saved" is shown. */
+function SecretField({ name, label, placeholder, saved, onChange }: { name: SecretName; label: string; placeholder: string; saved: boolean; onChange: () => Promise<void> }) {
+  const act = useAction()
+  const [v, setV] = useState('')
+  return (
+    <div className="field"><span>{label}{saved && <span className="tag ok">Saved in Keychain</span>}</span>
+      <div className="row-flex" style={{ flexWrap: 'nowrap' }}>
+        <input className="input" type="password" value={v} placeholder={saved ? 'Paste a new one to replace it' : placeholder} onChange={(e) => setV(e.target.value)} autoComplete="off" aria-label={label} />
+        <button className="btn primary" disabled={!v.trim()} onClick={() => void act(async () => {
+          const r = await api.setKey(v, name)
+          if (!r.ok) throw new Error(r.error)
+          setV('')
+          await onChange()
+        }, 'Saved')}>Save</button>
+        {saved && <button className="btn ghost danger" onClick={() => void act(async () => { await api.clearKey(name); await onChange() }, 'Removed')}>Remove</button>}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Setting up the Claude scheduled task. The task is created on claude.ai (only there can its API trigger and token
+ * be made); the app needs its address, its token, and a private GitHub repository the answers come back through.
+ */
+function RoutineSetup({ testing, test, runTest }: { testing: boolean; test: TestResult | null; runTest: () => void }) {
+  const { settings, saveSettings, boot, refreshBoot, toast } = useApp()
+  const act = useAction()
+  const [info, setInfo] = useState<Awaited<ReturnType<typeof api.routineInfo>> | null>(null)
+  const [creating, setCreating] = useState(false)
+  const load = (): Promise<void> => api.routineInfo().then(setInfo, () => setInfo(null))
+  useEffect(() => { void load() }, [])
+  if (!settings || !boot) return null
+  const r = settings.ai.routine
+  const ready = !!r.repo && !!r.fireUrl && boot.keys.routine
+  const createRepo = async (): Promise<void> => {
+    setCreating(true)
+    try {
+      const res = await api.routineCreateRepo()
+      if (!res.ok) throw new Error(res.error)
+      await refreshBoot()
+      toast(`Mailbox ready: ${res.repo}`)
+    } catch (e) { toast(errMsg(e), true) } finally { setCreating(false) }
+  }
+  return (
+    <div className="routine">
+      <p className="help">
+        Runs the AI work as a Claude scheduled task on your Claude plan, so no API key is billed. Requests are sent in batches of up to {r.batchMax}; each batch is one run and takes a minute or two. Claude allows 30 starts an hour for one task, and the app holds the next run when that is close. There is no daily count of runs: what runs out is your plan’s usage, which these runs share with everything else you do in Claude.
+      </p>
+      <ol className="steps">
+        <li>
+          <h3>Make the mailbox</h3>
+          <p className="help">A private GitHub repository carries the requests to Claude and the answers back. Your lesson text passes through it, so it has to be private; the app checks that before sending anything and clears each batch once it is read.</p>
+          {info && (info.github === 'gh'
+            ? <p className="help">GitHub access: using your GitHub CLI sign-in.</p>
+            : info.github === 'token' ? null
+              : <p className="help">GitHub access: none found. Sign in with the GitHub CLI (<code>gh auth login</code>) and reopen Settings, or paste a token with the “repo” permission below.</p>)}
+          {info && info.github !== 'gh' && <SecretField name="github" label="GitHub token" placeholder="ghp_… or github_pat_…" saved={boot.keys.github} onChange={async () => { await refreshBoot(); await load() }} />}
+          <div className="row-flex" style={{ alignItems: 'end' }}>
+            <TextField label="Mailbox repository" value={r.repo} placeholder="owner/name" onSave={(v) => void act(() => saveSettings({ ai: { routine: { repo: v } } }))} />
+            <button className="btn" disabled={creating || !info?.github} onClick={() => void createRepo()}>{creating ? <Spinner /> : <Icon.plus />} {r.repo ? 'Create another' : 'Create a private mailbox for me'}</button>
+          </div>
+        </li>
+        <li>
+          <h3>Create the scheduled task on claude.ai</h3>
+          <p className="help">Open <a href="https://claude.ai/code/routines">claude.ai/code/routines</a> and click <b>New task</b> (choose <b>Set up manually</b> if asked). Paste the prompt below, pick <b>API</b> as the trigger, and under <b>Advanced settings</b> choose the mailbox repository{r.repo ? <> (<span className="sel">{r.repo}</span>)</> : null}. When you click <b>Create</b> the token is shown once: copy it. The task URL is in the task’s <b>Edit</b> dialog, in the API trigger’s panel (<b>Fire URL</b>). A smaller model such as Sonnet uses less of your plan.</p>
+          <div className="copybox">
+            <p className="sel">{info?.prompt ?? '…'}</p>
+            <button className="btn small" disabled={!info} onClick={() => void navigator.clipboard.writeText(info?.prompt ?? '').then(() => toast('Prompt copied'), () => toast('Could not copy; select the text instead', true))}><Icon.copy /> Copy prompt</button>
+          </div>
+        </li>
+        <li>
+          <h3>Connect it</h3>
+          <TextField label="Task URL (shown with the API trigger)" value={r.fireUrl} placeholder="https://api.anthropic.com/v1/claude_code/routines/trig_…/fire" onSave={(v) => void act(() => saveSettings({ ai: { routine: { fireUrl: v } } }))} />
+          <SecretField name="routine" label="Task token" placeholder="sk-ant-oat01-…" saved={boot.keys.routine} onChange={refreshBoot} />
+        </li>
+        <li>
+          <h3>Check the setup</h3>
+          <div className="row-flex">
+            <button className="btn" disabled={testing} onClick={runTest}>{testing ? <Spinner /> : <Icon.check />} Check setup</button>
+            <span className="muted small">{ready ? 'Checks the mailbox and the fields without starting a run.' : 'Finish the steps above first.'}</span>
+          </div>
+          {test && (
+            <div style={{ marginTop: 10 }}>
+              {test.ok ? <p>Ready. The first lesson you organize is the real test.</p> : <p className="err-text sel">{test.error}</p>}
+              {test.notes.map((n) => <p key={n} className="help">{n}</p>)}
+            </div>
+          )}
+        </li>
+      </ol>
+      <div className="grid3">
+        <NumField label="Requests per run" value={r.batchMax} min={1} max={20} onSave={(v) => void saveSettings({ ai: { routine: { batchMax: v } } })} />
+        <NumField label="Shortest time between runs" value={r.gapMinutes} min={0} max={240} suffix="min" onSave={(v) => void saveSettings({ ai: { routine: { gapMinutes: v } } })} />
+        <NumField label="Give up waiting after" value={r.timeoutMinutes} min={5} max={180} suffix="min" onSave={(v) => void saveSettings({ ai: { routine: { timeoutMinutes: v } } })} />
+      </div>
+      <p className="help">A run that takes longer than the wait above pauses the queue; its answers are still collected when they arrive, and Continue never pays for the same request twice.</p>
+    </div>
+  )
+}
+
 export function SettingsView() {
   const { settings, saveSettings, boot, refreshBoot, toast } = useApp()
   const act = useAction()
@@ -76,11 +176,11 @@ export function SettingsView() {
   const [testing, setTesting] = useState(false)
   const [test, setTest] = useState<TestResult | null>(null)
   const [caps, setCaps] = useState<Caps | null>(null)
-  const [md, setMd] = useState<string | null | undefined>(undefined)
-  useEffect(() => { void api.capsCheck().then((c) => setMd(c.markitdown)) }, [])
   useEffect(() => setModel(settings?.ai.model ?? ''), [settings?.ai.model])
+  const files = useFileSupport()
   if (!settings || !boot) return null
   const ai = settings.ai
+  const routine = ai.provider === 'routine'
   const info = providerInfo(ai.provider)
   const presets = MODEL_PRESETS[ai.provider]
   const thinkLabel = THINK_LABEL[ai.provider]
@@ -93,7 +193,7 @@ export function SettingsView() {
     setTesting(true)
     setTest(null)
     try {
-      if (model.trim() !== ai.model) await saveSettings({ ai: { model: model.trim() } })
+      if (!routine && model.trim() !== ai.model) await saveSettings({ ai: { model: model.trim() } })
       setTest(await api.testModel(model.trim()))
       await refreshBoot()
     } catch (e) { toast(errMsg(e), true) } finally { setTesting(false) }
@@ -120,20 +220,18 @@ export function SettingsView() {
 
   return (
     <div className="page">
-      <div className="page-inner" style={{ maxWidth: 820 }}>
-        <h1>Settings</h1>
-
+      <div className="page-inner settings">
         <section className="block">
           <h2>AI provider</h2>
           <label className="field" style={{ maxWidth: 300 }}><span>Provider</span>
             <select className="input" value={ai.provider} onChange={(e) => void switchProvider(e.target.value as Provider)} aria-label="AI provider">
-              {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}{boot.keys[p.id] ? ' · key saved' : ''}</option>)}
+              {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}{boot.keys[p.id] ? ' (saved)' : ''}</option>)}
             </select>
           </label>
           <p className="help">Each provider keeps its own key. Switching keeps the other keys saved and changes the model list below.</p>
-
+          {routine ? <RoutineSetup testing={testing} test={test} runTest={() => void runTest()} /> : <>
           <h3 style={{ marginTop: 14 }}>{info.keyName}</h3>
-          <p className="help">{boot.hasKey ? 'A key is saved, encrypted with the macOS Keychain. It never leaves the main process.' : 'No key saved yet.'} Get a key at <a href={info.keyUrl} target="_blank" rel="noreferrer">{info.keyUrl.replace(/^https:\/\//, '')}</a>.</p>
+          <p className="help">{boot.hasKey ? 'A key is saved in the macOS Keychain. The page you are looking at never sees it.' : 'No key saved yet.'} Get a key at <a href={info.keyUrl} target="_blank" rel="noreferrer">{info.keyUrl.replace(/^https:\/\//, '')}</a>.</p>
           <div className="row-flex">
             <input className="input" type="password" style={{ maxWidth: 380 }} placeholder={boot.hasKey ? 'Paste a new key to replace it' : `Paste your API key (${info.keyPlaceholder})`} value={key} onChange={(e) => setKey(e.target.value)} autoComplete="off" aria-label={info.keyName} />
             <button className="btn primary" disabled={!key.trim()} onClick={() => void act(async () => {
@@ -151,9 +249,10 @@ export function SettingsView() {
           )}
           {ai.provider === 'anthropic' && <p className="help">Claude API usage is billed per token through the Claude Console, separately from a Claude.ai subscription. Anthropic does not train on API content by default.</p>}
           {ai.provider === 'openai' && <p className="help">OpenAI API usage is billed per token through the OpenAI Platform, separately from a ChatGPT subscription. Requests are sent with storage turned off, and OpenAI does not train on API content by default.</p>}
+          </>}
         </section>
 
-        <section className="block">
+        {!routine && <section className="block">
           <h2>Model</h2>
           <div className="row-flex">
             <select className="input" style={{ width: 210 }} value={presets.includes(model) ? model : ''} onChange={(e) => e.target.value && void chooseModel(e.target.value)} aria-label="Preset models">
@@ -199,13 +298,26 @@ export function SettingsView() {
             </p>
           )}
           <BaseUrlField key={ai.provider} value={ai.baseUrls[ai.provider] ?? ''} fallback={DEFAULT_BASE_URLS[ai.provider]} onSave={async (v) => (await act(async () => { await saveSettings({ ai: { baseUrls: { [ai.provider]: v } } }); return true })) === true} />
+        </section>}
+
+        <section className="block">
+          <h2>Lesson files</h2>
+          <p className="help">{files && files.types.some((t) => t.kind === 'file')
+            ? `${files.provider} gets PDFs${routine ? '' : ', Word files'} and pictures as the files themselves: it reads the text and sees every page, so tables, equations, figures and scans count. Other types go as text.`
+            : 'Only Gemini and the Claude scheduled task are sent the files themselves. This provider gets the text the Mac extracts.'}</p>
+          {files && <FileSupportList table={files} />}
+          {routine && <p className="help" style={{ marginTop: 8 }}>Files go to the mailbox on a branch of their own, deleted once the run is over. GitHub may keep deleted data for a while, and the run's session on claude.ai keeps what it read, so use a mailbox only you can see.</p>}
         </section>
 
         <section className="block">
           <h2>Requests</h2>
-          <p className="help">The app sends one request at a time, as fast as {info.label.replace(/ \(.*\)$/, '')} allows. If the provider’s rate limit is reached, everything pauses and you get a notification; Continue picks up exactly where it stopped, without redoing finished work.</p>
+          <p className="help">{routine
+            ? 'Lessons are cut into windows; each window is one request, and requests travel together in runs. If the task stops answering or hits its limit, everything pauses and you get a notification; Continue picks up exactly where it stopped, without redoing finished work.'
+            : `The app sends one request at a time, as fast as ${info.label.replace(/ \(.*\)$/, '')} allows. If the provider’s rate limit is reached, everything pauses and you get a notification; Continue picks up exactly where it stopped, without redoing finished work.`}</p>
           <div className="grid3">
-            <NumField label="Window size" value={ai.windowTokens} min={1000} max={8000} step={250} suffix="input tokens" onSave={(v) => void saveSettings({ ai: { windowTokens: v } })} />
+            {routine
+              ? <NumField label="Window size" value={ai.routine.windowTokens} min={2000} max={20000} step={500} suffix="input tokens" onSave={(v) => void saveSettings({ ai: { routine: { windowTokens: v } } })} />
+              : <NumField label="Window size" value={ai.windowTokens} min={1000} max={8000} step={250} suffix="input tokens" onSave={(v) => void saveSettings({ ai: { windowTokens: v } })} />}
             <NumField label="Max output per request" value={ai.maxOutputTokens} min={300} max={8000} step={100} suffix="tokens" onSave={(v) => void saveSettings({ ai: { maxOutputTokens: v } })} />
           </div>
           <label className="check" style={{ marginTop: 10 }}><input type="checkbox" checked={ai.includeModelInCacheKey} onChange={(e) => void saveSettings({ ai: { includeModelInCacheKey: e.target.checked } })} /><span>Keep separate cached results per model. Off: switching models reuses earlier results and saves tokens.</span></label>
@@ -218,7 +330,10 @@ export function SettingsView() {
             <NumField label="Reading pace for suggested times" value={settings.study.pace} min={30} max={400} suffix="words/min" onSave={(v) => void saveSettings({ study: { pace: v } })} />
           </div>
           <label className="check" style={{ marginTop: 8 }}><input type="checkbox" checked={settings.study.useSuggested} onChange={(e) => void saveSettings({ study: { useSuggested: e.target.checked } })} /><span>Use each topic’s suggested time in timed mode</span></label>
-          <h2 style={{ marginTop: 16 }}>Pomodoro</h2>
+        </section>
+
+        <section className="block">
+          <h2>Pomodoro</h2>
           <div className="grid3">
             <NumField label="Work" value={settings.pomo.work} min={1} suffix="min" onSave={(v) => void saveSettings({ pomo: { work: v } })} />
             <NumField label="Break" value={settings.pomo.brk} min={1} suffix="min" onSave={(v) => void saveSettings({ pomo: { brk: v } })} />
@@ -245,7 +360,7 @@ export function SettingsView() {
             <label className="check"><input type="checkbox" checked={settings.notify.badge} onChange={(e) => void saveSettings({ notify: { badge: e.target.checked } })} /><span>Badge the Dock icon</span></label>
             <button className="btn" onClick={() => void act(() => api.testNotification())}>Send a test notification</button>
           </div>
-          <p className="help">If nothing appears, allow notifications in System Settings, Notifications. While running with npm run dev the app is listed as “Electron”.</p>
+          <p className="help">If nothing appears, allow notifications for Interleaved Study in System Settings, Notifications.</p>
         </section>
 
         <section className="block">
@@ -256,16 +371,9 @@ export function SettingsView() {
         </section>
 
         <section className="block">
-          <h2>Deadline spreadsheets</h2>
-          <p className="help">Spreadsheets imported on the Plan page are converted to Markdown with <a href="https://github.com/microsoft/markitdown" target="_blank" rel="noreferrer">markitdown</a>, then the AI finds the deadlines and you review them before they are added. The first <code>npm run build</code> installs a private copy into the project (and <code>npm run dist</code> bundles it into the app), so nothing needs to be installed globally. Without it, a built-in converter is used.</p>
-          <TextField label="markitdown command" value={settings.tools.markitdown} placeholder="Find automatically" onSave={(v) => void saveSettings({ tools: { markitdown: v } }).then(() => api.capsCheck()).then((c) => setMd(c.markitdown))} />
-          <p className="help">{md === undefined ? 'Checking for markitdown…' : md ? <>Using <span className="sel">{md}</span>.</> : 'markitdown was not found. Run npm run setup:markitdown in the project folder, or enter the full path of another install above.'}</p>
-        </section>
-
-        <section className="block">
           <h2>Data</h2>
           <p className="help">
-            Storage: {boot.caps.storeKind === 'sqlite' ? 'SQLite database (WAL, full-text search).' : 'JSON file fallback.'}
+            Storage: SQLite database on this Mac (WAL, full-text search).
             {boot.caps.storeError && <span className="err-text"> {boot.caps.storeError}</span>}
           </p>
           <div className="row-flex">
@@ -277,7 +385,7 @@ export function SettingsView() {
             })}><Icon.upload /> Import backup</button>
             <button className="btn ghost" onClick={() => void api.openDataFolder()}><Icon.folder /> Open data folder</button>
           </div>
-          <p className="help">Backups contain everything except the API key. Importing replaces all data and keeps your current key; a safety copy of the current data is written to the data folder first.</p>
+          <p className="help">Backups contain everything except keys and tokens. Importing replaces all data and keeps your current keys and scheduled task setup; a safety copy of the current data is written to the data folder first.</p>
         </section>
 
         <section className="block">
@@ -285,12 +393,11 @@ export function SettingsView() {
           <button className="btn" onClick={() => void api.capsCheck().then(setCaps)}>Run check</button>
           {caps && (
             <dl className="facts" style={{ marginTop: 10 }}>
-              <dt>Database</dt><dd>{caps.storeKind === 'sqlite' ? 'SQLite loaded' : `JSON fallback${caps.storeError ? `: ${caps.storeError}` : ''}`}</dd>
-              <dt>Keychain encryption</dt><dd>{caps.safeStorage ? 'available' : 'not available'}</dd>
+              <dt>Database</dt><dd>SQLite loaded</dd>
+              <dt>Keychain</dt><dd>{caps.safeStorage ? 'available' : 'not available'}</dd>
               <dt>Notifications</dt><dd>{caps.notifications ? 'supported (permission is granted in System Settings)' : 'not supported'}</dd>
               <dt>Menu bar timer</dt><dd>{caps.tray ? 'created' : 'not created'}</dd>
               <dt>Dock badge and bounce</dt><dd>{caps.dock ? 'available' : 'not available on this platform'}</dd>
-              <dt>markitdown</dt><dd className="sel">{caps.markitdown ?? 'not found (built-in converter is used)'}</dd>
               <dt>Data folder</dt><dd className="sel">{caps.dataPath}</dd>
             </dl>
           )}

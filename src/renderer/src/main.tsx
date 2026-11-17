@@ -1,12 +1,14 @@
 import './style.css'
 import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { AppProvider, applyAccent, useAction, useApp, type View } from './state'
+import { AppProvider, useAction, useApp, type View } from './state'
 import { api, errMsg } from './api'
+import { dropSummary, useFileSupport } from './components/FileSupport'
 import { Icon } from './icons'
 import { Ribbon } from './components/Ribbon'
 import { ImportFlow, importFlow, importTarget } from './components/ImportFlow'
 import { Board } from './views/Board'
+import { Today } from './views/Today'
 import { SessionView } from './views/Session'
 import { Plan } from './views/Plan'
 import { Progress } from './views/Progress'
@@ -15,10 +17,13 @@ import { SettingsView } from './views/Settings'
 import { providerInfo } from '../../shared/defaults'
 import { RATINGS } from '../../shared/sched'
 
-const TABS: { id: View; label: string }[] = [
-  { id: 'board', label: 'Topics' }, { id: 'session', label: 'Session' }, { id: 'plan', label: 'Plan' },
-  { id: 'progress', label: 'Progress' }, { id: 'queue', label: 'Queue' }, { id: 'settings', label: 'Settings' }
+const NAV: { id: View; label: string; icon: keyof typeof Icon; key: string }[] = [
+  { id: 'today', label: 'Today', icon: 'today', key: '1' }, { id: 'session', label: 'Study', icon: 'timer', key: '2' },
+  { id: 'board', label: 'Library', icon: 'topics', key: '3' }, { id: 'plan', label: 'Plan', icon: 'calendar', key: '4' },
+  { id: 'progress', label: 'Progress', icon: 'chart', key: '5' }
 ]
+
+const TITLE: Record<View, string> = { today: 'Today', board: 'Library', session: 'Study', plan: 'Plan', progress: 'Progress', queue: 'AI queue', settings: 'Settings' }
 
 function isTyping(e: KeyboardEvent): boolean {
   const el = e.target as HTMLElement | null
@@ -68,77 +73,72 @@ function Shortcuts() {
 function DropTarget() {
   const { view, courseWizard, courses } = useApp()
   const [over, setOver] = useState(false)
-  useEffect(() => {
-    let depth = 0
-    const hasFiles = (e: DragEvent): boolean => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')
-    const reset = (): void => { depth = 0; setOver(false) }
-    const enter = (e: DragEvent): void => { if (hasFiles(e)) { depth++; setOver(true) } }
-    // A cancelled drag (Esc, or leaving the window) can skip leave events, so leaving the window resets the count.
-    const outside = (e: DragEvent): boolean => e.clientX <= 0 || e.clientY <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight
-    const leave = (e: DragEvent): void => {
-      depth--
-      if (depth <= 0 || outside(e)) reset()
-    }
-    const overFn = (e: DragEvent): void => { if (hasFiles(e)) e.preventDefault() }
-    const drop = (e: DragEvent): void => {
-      e.preventDefault()
-      reset()
-      const files = Array.from(e.dataTransfer?.files ?? [])
-      const paths = files.map((f) => api.pathForFile(f)).filter(Boolean)
-      if (paths.length) importFlow.drop(paths)
-    }
-    window.addEventListener('dragenter', enter)
-    window.addEventListener('dragleave', leave)
-    window.addEventListener('dragover', overFn)
-    window.addEventListener('drop', drop)
-    window.addEventListener('dragend', reset)
-    return () => {
-      window.removeEventListener('dragenter', enter)
-      window.removeEventListener('dragleave', leave)
-      window.removeEventListener('dragover', overFn)
-      window.removeEventListener('drop', drop)
-      window.removeEventListener('dragend', reset)
-    }
-  }, [])
+  const files = useFileSupport()
+  useEffect(() => api.onFileDrop((e) => {
+    setOver(e.type === 'over')
+    if (e.type === 'drop' && e.paths.length) importFlow.drop(e.paths)
+  }), [])
   if (!over) return null
   const target = view === 'board' && !courseWizard ? courses.get(importTarget.course ?? '') : undefined
   return (
     <div className="dropzone">
       <div>
         {courseWizard ? 'Drop files or folders to add them to the new course' : target ? `Drop lesson files or folders to add them to ${target.name}` : 'Drop lesson files or folders to start a new course'}
-        <span className="muted small" style={{ display: 'block', marginTop: 4 }}>.md and .txt; PDF and DOCX best effort</span>
+        <span className="muted small" style={{ display: 'block', marginTop: 4 }}>{dropSummary(files)}</span>
       </div>
     </div>
   )
 }
 
-function TitleBar() {
-  const { view, setView, queue } = useApp()
+/** The window's left edge: the product, where you can go, and what the AI is doing right now. */
+function Sidebar() {
+  const { view, setView, queue, data, now } = useApp()
   const act = useAction()
-  const busy = queue && (queue.running || queue.queued > 0)
+  const busy = !!queue && (!!queue.running || queue.queued > 0)
+  const due = data ? data.topics.filter((t) => t.due !== null && t.due !== undefined && t.due <= now).length : 0
+  const waiting = queue ? queue.queued + queue.failed.length : 0
+  const state = !queue ? null
+    : queue.rateLimit ? 'Limit reached, paused'
+      : queue.failed.length ? `${queue.failed.length} failed`
+        : queue.userPaused && queue.queued ? 'Paused'
+          : queue.run?.state === 'waiting' ? 'Waiting for Claude'
+            : busy ? `Organizing ${queue.chunksDone}/${queue.chunksTotal || queue.queued}` : null
+  const warn = !!(queue?.rateLimit || queue?.failed.length)
   return (
-    <div className="titlebar">
-      <nav className="tabs" aria-label="Views">
-        {TABS.map((t) => (
-          <button key={t.id} className="tab" aria-current={view === t.id ? 'page' : undefined} onClick={() => setView(t.id)}>{t.label}</button>
-        ))}
+    <aside className="sidebar">
+      <div className="sidebar-drag" data-tauri-drag-region />
+      <div className="brand" data-tauri-drag-region>
+        <svg className="mark" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
+          <path className="lane" d="M5 2v16M15 2v16" />
+          <path className="thread" d="M5 3c0 3 10 2 10 5s-10 2-10 5 10 2 10 4" />
+        </svg>
+        <span>Interleaved Study</span>
+      </div>
+      <nav className="nav" aria-label="Views">
+        {NAV.map((t) => {
+          const I = Icon[t.icon]
+          const n = t.id === 'today' ? due : 0
+          return (
+            <button key={t.id} className="nav-item" aria-current={view === t.id ? 'page' : undefined} onClick={() => setView(t.id)} title={`${t.label} (⌘${t.key})`}>
+              <I /><span>{t.label}</span>{n > 0 && <span className="nav-count num" title={`${n} topics due for review`}>{n}</span>}
+            </button>
+          )
+        })}
       </nav>
-      <div className="spacer" />
-      {queue && (busy || queue.failed.length > 0 || queue.pausedUntil || queue.rateLimit) ? (
-        <button className="qpill" onClick={() => setView('queue')} title="AI queue">
-          {queue.running ? <span className="spinner" /> : <Icon.layers />}
-          {queue.failed.length ? <span className="overdue">{queue.failed.length} failed</span> : null}
-          {queue.queued ? <span className="num">{queue.chunksDone}/{queue.chunksTotal || queue.queued} organizing</span> : null}
-          {queue.rateLimit ? <span className="overdue">rate limit · paused</span> : queue.userPaused ? <span>paused</span> : null}
+      <div className="sidebar-foot">
+        <div className={`ai-row${warn ? ' warn' : ''}`}>
+          <button className="nav-item" aria-current={view === 'queue' ? 'page' : undefined} onClick={() => setView('queue')} title="AI queue (⌘6)">
+            {queue?.running && !queue.userPaused ? <span className="spinner" /> : <Icon.layers />}
+            <span className="ai-text"><span>AI queue</span>{state && <span className="ai-state">{state}</span>}</span>
+            {!state && waiting > 0 && <span className="nav-count num">{waiting}</span>}
+          </button>
+          {busy && <button className="icon-btn" title="Cancel all AI requests" aria-label="Cancel all AI requests" onClick={() => void act(() => api.cancelAi(), 'AI requests cancelled')}><Icon.close /></button>}
+        </div>
+        <button className="nav-item" aria-current={view === 'settings' ? 'page' : undefined} onClick={() => setView('settings')} title="Settings (⌘,)">
+          <Icon.sliders /><span>Settings</span>
         </button>
-      ) : null}
-      {busy ? (
-        <button className="qpill" title="Cancel all AI requests" aria-label="Cancel all AI requests"
-          onClick={() => void act(() => api.cancelAi(), 'AI requests cancelled')}>
-          <Icon.close /> Cancel
-        </button>
-      ) : null}
-    </div>
+      </div>
+    </aside>
   )
 }
 
@@ -157,15 +157,16 @@ function RateLimitBanner() {
   }, [rl?.resetAt])
   if (!rl) return null
   const name = providerInfo(rl.provider).label.replace(/ \(.*\)$/, '')
+  const routine = rl.provider === 'routine'
   const left = rl.resetAt ? Math.max(0, Math.ceil((rl.resetAt - now) / 1000)) : null
   const wait = left === null ? '' : left > 0 ? ` ${name} asked to wait ${left >= 120 ? `about ${Math.ceil(left / 60)} min` : `${left} s`}.` : ` ${name}’s wait time has passed.`
   return (
     <div className="banner alert" role="alert">
       <span>
-        <b>{name} rate limit reached.</b> Everything is paused and nothing is lost; Continue picks up exactly where it stopped.{wait}
+        <b>{routine ? 'The Claude scheduled task stopped answering or hit its limit.' : `${name} rate limit reached.`}</b> Everything is paused and nothing is lost; Continue picks up exactly where it stopped.{wait}
         <span className="muted small sel" style={{ display: 'block' }} title={rl.message}>{rl.model}: {rl.message.slice(0, 160)}</span>
       </span>
-      <button className="btn primary" style={{ marginLeft: 'auto' }} onClick={() => void api.resumeQueue().then(() => toast('Continuing'), (e) => toast(errMsg(e), true))}><Icon.play /> Continue</button>
+      <button className="btn primary" onClick={() => void api.resumeQueue().then(() => toast('Continuing'), (e) => toast(errMsg(e), true))}><Icon.play /> Continue</button>
     </div>
   )
 }
@@ -186,6 +187,7 @@ function Shell() {
   } else {
     body = (
       <>
+        {view === 'today' && <Today />}
         {view === 'board' && <Board />}
         {view === 'session' && <SessionView />}
         {view === 'plan' && <Plan />}
@@ -196,10 +198,18 @@ function Shell() {
     )
   }
   return (
-    <div className="app">
-      <TitleBar />
-      <div><Ribbon /><RateLimitBanner /></div>
-      <main style={{ minHeight: 0, display: 'grid' }}>{body}</main>
+    <div className="app" data-view={view}>
+      <Sidebar />
+      <div className="content">
+        <div className="content-top">
+          <header className="topbar" data-tauri-drag-region>
+            <h1 className="view-title" data-tauri-drag-region>{TITLE[view]}</h1>
+            <Ribbon />
+          </header>
+          <RateLimitBanner />
+        </div>
+        <main>{body}</main>
+      </div>
       <ImportFlow />
       <DropTarget />
       <Shortcuts />
@@ -208,10 +218,13 @@ function Shell() {
   )
 }
 
-// Set before the first render so nothing paints in the fallback colors. On macOS the window behind the page is
-// the system sidebar material, which the title bar and the Topics sidebar let show through.
-applyAccent(api.accent)
-if (navigator.userAgent.includes('Macintosh')) document.documentElement.classList.add('vibrant')
+// Links to the provider consoles and GitHub open in the browser, never inside the app's window.
+document.addEventListener('click', (e) => {
+  const a = (e.target as HTMLElement | null)?.closest?.('a[href]') as HTMLAnchorElement | null
+  if (!a || !/^https?:/.test(a.href)) return
+  e.preventDefault()
+  void api.openExternal(a.href)
+})
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

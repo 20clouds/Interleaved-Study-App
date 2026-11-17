@@ -7,6 +7,7 @@ import type { Course, Doc, Topic } from '../../../shared/types'
 import { mastery, status, type Status } from '../../../shared/sched'
 import { DAY } from '../../../shared/util'
 import { api } from '../api'
+import { DeliveryTag, deliveryFor, useFileSupport } from '../components/FileSupport'
 import { courseClass, useAction, useApp, useConfirmAction, type ScopeSel } from '../state'
 import { Icon } from '../icons'
 import { Deck, Empty, MasteryBar, Modal, StatusChip, deckName, fmtMin, fmtRel } from '../ui'
@@ -275,10 +276,11 @@ function posAt(e: DragEvent<HTMLElement>, ps: Pos[], axis: 'x' | 'y' = 'y'): Pos
 }
 
 export function Board() {
-  const { data, scope, setScope, selected, setSelected, courses, docs, now, toast, setView, courseWizard, setCourseWizard } = useApp()
+  const { data, scope, setScope, selected, setSelected, courses, docs, now, toast, courseWizard, setCourseWizard } = useApp()
   const act = useAction()
   const ask = useConfirmAction()
   const derived = useDerived()
+  const files = useFileSupport()
   const { layout, update, reset } = useBoardLayout(data?.courses ?? [], data?.docs ?? [])
   const groups = useMemo(() => groupsOf(layout), [layout])
   const prefs = layout.prefs
@@ -541,15 +543,14 @@ export function Board() {
           {...dnd({ type: 'lesson', id: d.id, course: d.courseId }, { kind: 'lesson', id: d.id, course: d.courseId }, false)}>
           <Icon.chevron className={`chev${lOpen ? ' open' : ''}`} />
           <InlineEdit value={d.title} onSave={(v) => void act(() => api.renameDoc(d.id, v))} className="gname" />
-          {prefs.deck && deckName(d) !== d.title && <span className="deck" title={d.fileName}><Icon.file size={12} /><span>{deckName(d)}</span></span>}
-          {d.ext === 'pdf' || d.ext === 'docx' ? <span className="muted small" title={d.importNote ?? ''}>{d.ext.toUpperCase()}, best effort</span> : null}
           <span className="meta">
+            {(() => { const dl = d.ext !== 'md' && d.ext !== 'txt' && d.ext !== 'markdown' ? deliveryFor(d, files) : null; return dl ? <DeliveryTag d={dl} /> : null })()}
             <DocState d={d} />
             {rows.length > 0 && <Count n={rows.length} />}
             {due > 0 && <span className="num overdue">{due} due</span>}
-            {rows.length > 0 && !lOpen && prefs.cols.mastery && <MasteryBar v={avg} />}
-            {d.ext !== 'manual' && (d.status === 'organized' || d.status === 'needs') && <button className="btn ghost small" title="Re-organize with AI" onClick={(e) => { e.stopPropagation(); void reorganize(d) }}><Icon.sparkle /> Re-organize</button>}
-            <button className="btn ghost icon" title="Delete lesson" aria-label="Delete lesson" onClick={(e) => { e.stopPropagation(); confirmDeleteDoc(d) }}><Icon.trash /></button>
+            {rows.length > 0 && prefs.cols.mastery && <MasteryBar v={avg} />}
+            {d.ext !== 'manual' && (d.status === 'organized' || d.status === 'needs') && <button className="btn ghost icon row-act" title="Re-organize with AI" aria-label="Re-organize with AI" onClick={(e) => { e.stopPropagation(); void reorganize(d) }}><Icon.sparkle /></button>}
+            <button className="btn ghost icon row-act" title="Delete lesson" aria-label="Delete lesson" onClick={(e) => { e.stopPropagation(); confirmDeleteDoc(d) }}><Icon.trash /></button>
           </span>
         </div>
         {lOpen && [...units.entries()].map(([u, urows]) => {
@@ -666,10 +667,15 @@ export function Board() {
   const multi = layout.sections.length > 1
   const shelf = (
     <div className="shelf">
+      <div className="shelf-top">
+        <h2>Courses</h2>
+        <span className="muted">{plural(data.courses.length, 'course')}, {plural(data.topics.length, 'topic')}</span>
+        <button className="btn ghost" onClick={() => setAdding(true)}><Icon.plus /> Add a topic by hand</button>
+      </div>
       {layout.sections.map((s, i) => {
         if (scopeGroup?.courses && scope.kind === 'group' && scope.id !== s.id && !leaves(s.items).some((id) => scopeGroup.courses?.has(id))) return null
         return (
-          <section key={s.id} className="shelf-sec" style={vars({ '--g': colorCss(s.color) })} aria-label={s.name}>
+          <section key={s.id} style={vars({ '--g': colorCss(s.color) })} aria-label={s.name}>
             {multi && (
               <div className={`shelf-h${dz(s.id, s.id)}`} {...dnd({ type: 'section', id: s.id }, { kind: 'section', id: s.id }, true)}>
                 <InlineEdit value={s.name} startEditing={fresh === s.id} className="gname" onSave={(v) => update((l) => { const x = l.sections.find((y) => y.id === s.id); if (x) x.name = v })} />
@@ -713,6 +719,10 @@ export function Board() {
         <div className="course-title">
           <InlineEdit value={c.name} onSave={(v) => void act(() => api.renameCourse(c.id, v))} className="ctitle" />
           {courseMenu(c)}
+          <span className="course-actions">
+            <button className="btn ghost" onClick={() => setAdding(true)}><Icon.plus /> Add topic</button>
+            {upload(cid)}
+          </span>
         </div>
         <p className="course-sub">
           {plural(st.lessons, 'lesson')}, {plural(st.topics, 'topic')}
@@ -773,10 +783,6 @@ export function Board() {
             message: `Delete ${sel.length} topic(s)?`, confirm: 'Delete', danger: true, detail: 'Their study history is removed too.'
           }, async () => { await api.deleteTopics(sel); setChecked(new Set()) })}><Icon.trash /> Delete</button>}
           <CustomizePanel layout={layout} setPrefs={setPrefs} onNewSection={newSection} onReset={() => { reset(); toast('Layout reset') }} />
-          <button className="btn" onClick={() => setAdding(true)}><Icon.plus /> Add topic</button>
-          {scopeCourse ? upload(scopeCourse)
-            : <button className="btn" onClick={() => setCourseWizard([])} title="Create a course"><Icon.folderPlus /> New course</button>}
-          <button className="btn primary" onClick={() => setView('session')} title="Choose a pool and start"><Icon.play /> Study</button>
         </div>
         {home ? <div className="rows home">{shelf}</div> : (
           <div className="rows" role="table" aria-label="Topic list">

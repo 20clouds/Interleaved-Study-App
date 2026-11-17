@@ -50,6 +50,32 @@ export interface Doc {
   importNote?: string | null
   createdAt: number
   updatedAt: number
+  /** sha256 of the original file at import; lessons imported before this existed have none. */
+  fileHash?: string
+  fileBytes?: number
+  pages?: number
+  /** No text on the Mac (a scanned PDF, a picture): the AI reads the file first. */
+  needsReading?: boolean
+  /** The lesson's text was written out by the AI from the file. */
+  readByAi?: boolean
+}
+
+/** How a file type reaches the current model. */
+export type FileDelivery = 'file' | 'text' | 'extracted' | 'unsupported'
+
+export interface FileSupport {
+  ext: string
+  kind: FileDelivery
+  label: string
+  detail: string
+  maxBytes?: number
+  maxPages?: number
+}
+
+export interface FileSupportTable {
+  provider: string
+  model: string
+  types: FileSupport[]
 }
 
 export interface Topic extends Sched {
@@ -114,7 +140,7 @@ export interface Snapshot {
   total: number
 }
 
-export type JobKind = 'organize' | 'dedupe' | 'enrich' | 'quiz' | 'grade' | 'deadlines'
+export type JobKind = 'organize' | 'read' | 'dedupe' | 'enrich' | 'quiz' | 'grade' | 'deadlines'
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed'
 
 export interface Job {
@@ -155,13 +181,16 @@ export interface Grade {
 
 export type Endpoint = 'auto' | 'generateContent' | 'interactions'
 
-export type Provider = 'gemini' | 'anthropic' | 'openai'
+/** `routine` is a Claude scheduled task fired over its API trigger: paid for by a Claude subscription, no API key. */
+export type Provider = 'gemini' | 'anthropic' | 'openai' | 'routine'
+/** Everything a secret is stored for: the providers, plus the GitHub token the scheduled-task mailbox may use. */
+export type SecretName = Provider | 'github'
 
 /** A Gemini thinking level. Gemma 4 takes only two: minimal turns thinking off, high turns it on. */
 export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high'
 
 /** Wire API a model is called through: two for Gemini, one each for Claude and OpenAI. */
-export type WireApi = 'generateContent' | 'interactions' | 'messages' | 'responses'
+export type WireApi = 'generateContent' | 'interactions' | 'messages' | 'responses' | 'routine'
 
 export interface Settings {
   ai: {
@@ -176,6 +205,7 @@ export interface Settings {
     minimalThinking: boolean // Claude and OpenAI; Gemini uses `thinking`
     thinking: Partial<Record<string, ThinkingLevel>> // Gemini: the level chosen per model (absent: its fastest)
     defaultsRev: number // which one-time settings migrations have run
+    routine: RoutineSettings
   }
   study: { minutes: number; useSuggested: boolean; pace: number }
   pomo: {
@@ -194,6 +224,28 @@ export interface Settings {
   tools: { markitdown: string } // markitdown command or path; blank = find it automatically
 }
 
+/** The Claude scheduled task and its mailbox (a private GitHub repository the answers come back through). */
+export interface RoutineSettings {
+  fireUrl: string // https://api.anthropic.com/v1/claude_code/routines/trig_…/fire
+  repo: string // owner/name
+  batchMax: number // requests sent in one run
+  batchChars: number
+  gapMinutes: number // shortest time between two runs (0: none)
+  timeoutMinutes: number
+  windowTokens: number
+  githubApi: string
+}
+
+/** A scheduled-task run the queue is waiting on. */
+export interface RunInfo {
+  batch: string
+  requests: number
+  firedAt: number
+  url: string | null
+  state: 'waiting' | 'sending' | 'holding'
+  nextFireAt: number | null
+}
+
 export interface ModelCaps {
   model: string
   api: WireApi
@@ -205,6 +257,7 @@ export interface ModelCaps {
   schema?: boolean | null // Gemini structured output (response schema); absent in caps saved before it existed
   schemaFails?: number // Gemini: unexplained schema rejections in a row; the second turns schemas off
   room?: boolean | null // Gemini: false when thinking headroom goes past the model's output limit
+  fileRejected?: string[] // Gemini: MIME types this model refused when sent as a file
   testedAt?: number
   lastError?: string | null
 }
@@ -308,6 +361,7 @@ export interface QueueStatus {
   chunksDone: number
   rateLimit: RateLimitInfo | null // set when the provider's rate limit paused everything
   noKey: boolean
+  run: RunInfo | null
 }
 
 export interface RateLimitInfo {
@@ -358,7 +412,7 @@ export interface Caps {
 export interface Bootstrap {
   settings: Settings
   hasKey: boolean // for the active provider
-  keys: Record<Provider, boolean>
+  keys: Record<SecretName, boolean>
   caps: Caps
   modelCaps: Record<string, ModelCaps>
 }

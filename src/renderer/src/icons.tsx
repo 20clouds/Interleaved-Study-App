@@ -8,6 +8,13 @@ const S = ({ size = 16, className, children }: P & { children: ReactElement | Re
 )
 
 export const Icon = {
+  today: (p: P) => <S {...p}><circle cx="8" cy="8" r="2.75" /><path d="M8 1.75v1.5M8 12.75v1.5M1.75 8h1.5M12.75 8h1.5M3.6 3.6l1 1M11.4 11.4l1 1M3.6 12.4l1-1M11.4 4.6l1-1" /></S>,
+  topics: (p: P) => <S {...p}><path d="M2.5 4h11M2.5 8h11M2.5 12h7" /></S>,
+  timer: (p: P) => <S {...p}><circle cx="8" cy="9" r="5" /><path d="M8 6.5V9l1.8 1.2M6.5 2h3" /></S>,
+  calendar: (p: P) => <S {...p}><rect x="2.5" y="3.5" width="11" height="10" rx="1.5" /><path d="M2.5 6.5h11M5.5 2v2.5M10.5 2v2.5" /></S>,
+  chart: (p: P) => <S {...p}><path d="M3 13V8.5M6.5 13V5M10 13V9.5M13.5 13V3" /></S>,
+  link: (p: P) => <S {...p}><path d="M9 3h4v4M13 3L7.5 8.5M11 9.5V13H3V5h3.5" /></S>,
+  copy: (p: P) => <S {...p}><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 3.5h-6a2 2 0 00-2 2v6" /></S>,
   play: (p: P) => <S {...p}><path d="M5 3.5v9l7-4.5z" /></S>,
   pause: (p: P) => <S {...p}><path d="M5.5 3.5v9M10.5 3.5v9" /></S>,
   skip: (p: P) => <S {...p}><path d="M4 3.5l6 4.5-6 4.5zM12 3.5v9" /></S>,
@@ -31,5 +38,7 @@ export const Icon = {
   folderPlus: (p: P) => <S {...p}><path d="M2.5 4.5V12a1 1 0 001 1h9a1 1 0 001-1V6a1 1 0 00-1-1H8L6.5 3.5h-3a1 1 0 00-1 1zM8 7.2v3.6M6.2 9h3.6" /></S>,
   folder: (p: P) => <S {...p}><path d="M2.5 4.5V12a1 1 0 001 1h9a1 1 0 001-1V6a1 1 0 00-1-1H8L6.5 3.5h-3a1 1 0 00-1 1z" /></S>,
   file: (p: P) => <S {...p}><path d="M4 2.5h5l3 3V13a.5.5 0 01-.5.5h-7.5a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5zM9 2.5V5.5h3" /></S>,
+  fileText: (p: P) => <S {...p}><path d="M4 2.5h5l3 3V13a.5.5 0 01-.5.5h-7.5a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5zM9 2.5V5.5h3M5.8 8.5h4.4M5.8 11h3" /></S>,
+  image: (p: P) => <S {...p}><rect x="2.5" y="3.5" width="11" height="9" rx="1.5" /><circle cx="6" cy="6.8" r="1" /><path d="M2.8 11.5l3.4-3 2.3 2 1.8-1.5 2.9 2.5" /></S>,
   quiz: (p: P) => <S {...p}><circle cx="8" cy="8" r="5.5" /><path d="M6.4 6.3a1.7 1.7 0 113 1.1c-.6.4-1.4.8-1.4 1.7M8 11.2v.1" /></S>
 }

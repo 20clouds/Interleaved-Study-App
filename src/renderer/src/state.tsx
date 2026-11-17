@@ -5,7 +5,7 @@ import type { Bootstrap, Course, DataSnapshot, Doc, QueueStatus, Rating, Session
 import type { DeepPartial } from '../../shared/api'
 import { api, errMsg } from './api'
 
-export type View = 'board' | 'session' | 'plan' | 'progress' | 'queue' | 'settings'
+export type View = 'today' | 'board' | 'session' | 'plan' | 'progress' | 'queue' | 'settings'
 export type ScopeSel = { kind: 'all' } | { kind: 'course'; id: string } | { kind: 'lesson'; id: string } | { kind: 'unit'; docId: string; unit: string }
   | { kind: 'group'; id: string } // a Topics-tab section or folder
 
@@ -43,15 +43,6 @@ interface Ctx {
 
 const C = createContext<Ctx | null>(null)
 
-/** Use the system accent color for primary buttons, selection and focus, with text that stays readable on it. */
-export function applyAccent(hex: string | null): void {
-  const s = document.documentElement.style
-  if (!hex || !/^#[0-9a-f]{6}$/i.test(hex)) { s.removeProperty('--tide'); s.removeProperty('--tide-ink'); return }
-  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
-  s.setProperty('--tide', hex)
-  s.setProperty('--tide-ink', 0.299 * r + 0.587 * g + 0.114 * b > 170 ? '#1D1D1F' : '#FFFFFF')
-}
-
 export function useApp(): Ctx {
   const c = useContext(C)
   if (!c) throw new Error('useApp outside provider')
@@ -87,7 +78,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [queue, setQueue] = useState<QueueStatus | null>(null)
   const [session, setSession] = useState<SessionState | null>(null)
   const [now, setNow] = useState(Date.now())
-  const [view, setViewState] = useState<View>(() => (localStorage.getItem('view') as View) || 'board')
+  const [view, setViewState] = useState<View>(() => ((import.meta.env.DEV && new URLSearchParams(location.search).get('view')) || localStorage.getItem('view') || 'today') as View)
   const [selected, setSelected] = useState<string | null>(null)
   const [scope, setScope] = useState<ScopeSel>({ kind: 'all' })
   const [toastMsg, setToastMsg] = useState<{ msg: string; error: boolean } | null>(null)
@@ -128,7 +119,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       api.on('data', () => void reload()),
       api.on('queue', (q) => setQueue(q as QueueStatus)),
       api.on('session', (s) => setSession(s as SessionState | null)),
-      api.on('accent', (a) => applyAccent(a as string | null)),
       api.on('nav', (p) => {
         const n = p as { view: View; action?: string }
         setViewState(n.view)

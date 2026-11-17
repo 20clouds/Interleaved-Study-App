@@ -40,7 +40,7 @@ export function Inspector({ docsMap }: { docsMap: Map<string, Doc> }) {
   }, [t?.id, t?.words]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!t) {
-    return <aside className="pane inspector"><div className="muted" style={{ marginTop: 40, textAlign: 'center' }}>Select a topic to see why it is due, its history and overrides.</div></aside>
+    return <aside className="pane inspector"><div className="muted insp-empty">Select a topic to see why it is due, its history and overrides.</div></aside>
   }
   const d = docsMap.get(t.docId)
   const c = courses.get(t.courseId)
@@ -58,7 +58,7 @@ export function Inspector({ docsMap }: { docsMap: Map<string, Doc> }) {
     <aside className="pane inspector" aria-label="Topic details">
       <div>
         <div className="muted small">{c?.name}{d ? ` / ${d.title}` : ''}{t.unit && t.unit !== d?.title ? ` / ${t.unit}` : ''}</div>
-        <h1 className="sel">{t.name}</h1>
+        <h2 className="topic-name sel">{t.name}</h2>
         <div className="deck-big"><Icon.file /> Lecture file: <b>{deckName(d)}</b></div>
         {t.provisional && <div className="help">Provisional name until the AI organizes this lesson.</div>}
       </div>

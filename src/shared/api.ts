@@ -1,6 +1,6 @@
 import type {
-  Bootstrap, Caps, DataSnapshot, DeadlineExtract, DeadlineInput, Deadline, DayGoal, Estimate, Grade, ImportResult, JobKind,
-  OverrideAction, Pool, Provider, QueueStatus, Quiz, Rating, SessionState, Settings, SheetData, Suggestion, TestResult
+  Bootstrap, Caps, DataSnapshot, FileSupportTable, DeadlineExtract, DeadlineInput, Deadline, DayGoal, Estimate, Grade, ImportResult, JobKind,
+  OverrideAction, Pool, QueueStatus, SecretName, Quiz, Rating, SessionState, Settings, SheetData, Suggestion, TestResult
 } from './types'
 
 type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] }
@@ -9,10 +9,16 @@ type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]>
 export interface Api {
   bootstrap(): Promise<Bootstrap>
   setSettings(patch: DeepPartial<Settings>): Promise<Settings>
-  setKey(key: string, provider?: Provider): Promise<{ ok: boolean; error?: string }>
-  clearKey(provider?: Provider): Promise<void>
+  setKey(key: string, name?: SecretName): Promise<{ ok: boolean; error?: string }>
+  clearKey(name?: SecretName): Promise<void>
   testModel(model?: string): Promise<TestResult>
   capsCheck(): Promise<Caps>
+  /** How each lesson file type reaches the current provider and model. */
+  fileSupport(): Promise<FileSupportTable>
+  /** The text to paste into the scheduled task, and where GitHub access comes from (a saved token, the gh CLI, or none). */
+  routineInfo(): Promise<{ prompt: string; guide: string; github: 'token' | 'gh' | null }>
+  /** Create (or adopt) the private mailbox repository and save it in Settings. */
+  routineCreateRepo(name?: string): Promise<{ ok: boolean; repo?: string; settings?: Settings; error?: string }>
 
   snapshot(): Promise<DataSnapshot>
   /** excerpt: the AI's exact cut of the lesson for this topic (null for topics organized before excerpts existed). */
@@ -81,14 +87,16 @@ export interface Api {
   openDataFolder(): Promise<void>
   /** Ask in a native sheet on the window; true when the person chose `confirm`. */
   confirm(o: { message: string; detail?: string; confirm: string; danger?: boolean }): Promise<boolean>
+  /** Open one of the provider or GitHub pages the app links to in the browser. */
+  openExternal(url: string): Promise<void>
 }
 
-export type ApiEvent = 'data' | 'queue' | 'session' | 'nav' | 'menu' | 'accent'
+export type ApiEvent = 'data' | 'queue' | 'session' | 'nav' | 'menu'
 /** File menu commands that the page carries out. */
 export type MenuCommand = 'import-files' | 'import-folder'
 
 export const API_METHODS: (keyof Api)[] = [
-  'bootstrap', 'setSettings', 'setKey', 'clearKey', 'testModel', 'capsCheck',
+  'bootstrap', 'setSettings', 'setKey', 'clearKey', 'testModel', 'capsCheck', 'fileSupport', 'routineInfo', 'routineCreateRepo',
   'snapshot', 'topicText', 'search', 'renameTopic', 'updateTopic', 'mergeTopics', 'splitTopic', 'addTopic',
   'deleteTopics', 'override', 'reviewTopic', 'createCourse', 'renameCourse', 'deleteCourse', 'renameDoc', 'deleteDoc',
   'historyCount', 'reorganize', 'retryDoc',
@@ -98,14 +106,7 @@ export const API_METHODS: (keyof Api)[] = [
   'sessionState', 'sessionPreview', 'sessionStart', 'sessionPause', 'sessionResume', 'sessionExtend',
   'sessionSkip', 'sessionEndEarly', 'sessionRate', 'sessionAccept', 'sessionSkipBreak', 'sessionSkipSuggestion', 'sessionEnd', 'sessionSandbox',
   'addDeadline', 'updateDeadline', 'deleteDeadline', 'openSheet', 'extractDeadlines', 'importDeadlines', 'setDayGoal',
-  'exportBackup', 'importBackup', 'testNotification', 'openDataFolder', 'confirm'
+  'exportBackup', 'importBackup', 'testNotification', 'openDataFolder', 'confirm', 'openExternal'
 ]
-
-export interface Bridge extends Api {
-  on(event: ApiEvent, cb: (payload: unknown) => void): () => void
-  pathForFile(file: File): string
-  /** The system accent color when the window opened (#RRGGBB); later changes arrive as the 'accent' event. */
-  accent: string | null
-}
 
 export type { DeepPartial }

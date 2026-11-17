@@ -86,7 +86,7 @@ export function CustomizePanel({ layout, setPrefs, onNewSection, onReset }: {
 }) {
   const p = layout.prefs
   return (
-    <Pop title="Customize this view" className="" label={<><Icon.sliders /> Customize</>}>
+    <Pop title="Customize this view" label={<Icon.sliders />}>
       {(close) => (
         <div className="menu custom-panel">
           <div className="row-flex">

@@ -11,7 +11,8 @@ export interface ProviderInfo {
 export const PROVIDERS: ProviderInfo[] = [
   { id: 'gemini', label: 'Google Gemini (free tier available)', keyName: 'Google AI Studio API key', keyUrl: 'https://aistudio.google.com/apikey', keyPlaceholder: 'AIza…' },
   { id: 'anthropic', label: 'Anthropic Claude', keyName: 'Claude API key', keyUrl: 'https://platform.claude.com/settings/keys', keyPlaceholder: 'sk-ant-…' },
-  { id: 'openai', label: 'OpenAI (ChatGPT)', keyName: 'OpenAI API key', keyUrl: 'https://platform.openai.com/api-keys', keyPlaceholder: 'sk-…' }
+  { id: 'openai', label: 'OpenAI (ChatGPT)', keyName: 'OpenAI API key', keyUrl: 'https://platform.openai.com/api-keys', keyPlaceholder: 'sk-…' },
+  { id: 'routine', label: 'Claude scheduled task (uses your Claude plan)', keyName: 'scheduled task token', keyUrl: 'https://claude.ai/code/routines', keyPlaceholder: 'sk-ant-oat01-…' }
 ]
 
 export const providerInfo = (p: Provider): ProviderInfo => PROVIDERS.find((x) => x.id === p) ?? PROVIDERS[0]
@@ -24,7 +25,8 @@ export const providerInfo = (p: Provider): ProviderInfo => PROVIDERS.find((x) =>
 export const MODEL_PRESETS: Record<Provider, string[]> = {
   gemini: ['gemini-3.5-flash-lite', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-3.8-flash', 'gemini-flash-latest'],
   anthropic: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'],
-  openai: ['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra', 'gpt-5.6-terra', 'gpt-5.6-luna']
+  openai: ['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra', 'gpt-5.6-terra', 'gpt-5.6-luna'],
+  routine: ['claude-scheduled-task']
 }
 
 const ALL_LEVELS: ThinkingLevel[] = ['minimal', 'low', 'medium', 'high']
@@ -71,7 +73,8 @@ export function geminiLevelFor(ai: Pick<Settings['ai'], 'model' | 'thinking'>, m
 export const DEFAULT_BASE_URLS: Record<Provider, string> = {
   gemini: 'https://generativelanguage.googleapis.com',
   anthropic: 'https://api.anthropic.com',
-  openai: 'https://api.openai.com'
+  openai: 'https://api.openai.com',
+  routine: ''
 }
 
 export const SOUNDS = ['Glass', 'Ping', 'Basso', 'Blow', 'Bottle', 'Frog', 'Funk', 'Hero', 'Morse', 'Pop', 'Purr', 'Sosumi', 'Submarine', 'Tink']
@@ -88,7 +91,8 @@ export const DEFAULT_SETTINGS: Settings = {
     maxOutputTokens: 1200,
     minimalThinking: true,
     thinking: {},
-    defaultsRev: 2
+    defaultsRev: 2,
+    routine: { fireUrl: '', repo: '', batchMax: 6, batchChars: 120000, gapMinutes: 0, timeoutMinutes: 30, windowTokens: 9000, githubApi: '' }
   },
   study: { minutes: 30, useSuggested: false, pace: 120 },
   pomo: { work: 25, brk: 5, long: 15, cycles: 4, perTopic: 'one', n: 3, minutes: 40, autoStartNext: false },

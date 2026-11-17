@@ -19,7 +19,7 @@ function useTick(active: boolean): number {
 }
 
 export function QueueView() {
-  const { queue, data, setView } = useApp()
+  const { queue, data, setView, settings } = useApp()
   const act = useAction()
   const [est, setEst] = useState<Estimate | null>(null)
   const nowT = useTick(!!queue?.pausedUntil)
@@ -27,12 +27,12 @@ export function QueueView() {
   useEffect(() => { void api.estimate().then(setEst).catch(() => setEst(null)) }, [data])
   if (!queue || !data) return <div className="empty"><Spinner /></div>
   const s = queue
+  const routine = settings?.ai.provider === 'routine'
   return (
     <div className="page">
       <div className="page-inner">
-        <h1>AI queue</h1>
-        {s.noKey && <div className="banner alert"><span>Add an API key for the selected AI provider to organize lessons and make quizzes.</span><button className="btn primary" onClick={() => setView('settings')}>Open Settings</button></div>}
-        {s.userPaused && !s.rateLimit && <div className="banner info"><span>{s.pauseReason ?? 'The queue is paused.'}</span><button className="btn primary" onClick={() => void act(() => api.resumeQueue())}><Icon.play /> Resume</button></div>}
+        {s.noKey && <div className="banner alert"><span>{routine ? 'Finish the scheduled task setup to organize lessons and make quizzes.' : 'Add an API key for the selected AI provider to organize lessons and make quizzes.'}</span><button className="btn primary" onClick={() => setView('settings')}>Open Settings</button></div>}
+        {s.userPaused && !s.rateLimit && <div className="banner"><span>{s.pauseReason ?? 'The queue is paused.'}</span><button className="btn primary" onClick={() => void act(() => api.resumeQueue())}><Icon.play /> Resume</button></div>}
         {!s.userPaused && s.pausedUntil && (
           <div className="banner alert"><span>{s.pauseReason ?? 'Waiting before trying again.'} Next try in <span className="num">{Math.max(0, Math.ceil((s.pausedUntil - nowT) / 1000))} s</span>.</span>
             <button className="btn" onClick={() => void act(() => api.resumeQueue())}>Try now</button></div>
@@ -63,7 +63,17 @@ export function QueueView() {
               {s.runningId && <button className="btn small" onClick={() => void act(() => api.cancelAi({ jobId: s.runningId! }), 'Request cancelled')}><Icon.close /> Cancel</button>}
             </p>
           )}
-          <p className="help">One request at a time, as fast as the provider allows. Cancel stops the request in flight at once; a lesson whose organizing is cancelled keeps the topics it had, and windows that already finished stay cached for next time. If the provider's rate limit is reached, everything pauses and you get a notification; Continue picks up exactly where it stopped. If the app closes mid-run, the queue resumes on the next launch.</p>
+          {s.run && (
+            <p className="row-flex runline">
+              <span style={{ flex: 1 }}>
+                {s.run.state === 'waiting' ? <>Claude is working on {s.run.requests} request{s.run.requests === 1 ? '' : 's'}, started at <span className="num">{new Date(s.run.firedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>. Runs usually take a few minutes.</>
+                  : s.run.state === 'holding' ? <>{s.run.requests} request{s.run.requests === 1 ? '' : 's'} waiting for the next run{s.run.nextFireAt ? <> at <span className="num">{new Date(s.run.nextFireAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span></> : null}.</>
+                    : <>Sending {s.run.requests} request{s.run.requests === 1 ? '' : 's'} to the scheduled task.</>}
+              </span>
+              {s.run.url && <a className="btn small" href={s.run.url}><Icon.link /> Watch the run</a>}
+            </p>
+          )}
+          <p className="help">{routine ? 'Requests travel to your Claude scheduled task in runs, several at a time. Cancel' : 'One request at a time, as fast as the provider allows. Cancel'} stops the request in flight at once; a lesson whose organizing is cancelled keeps the topics it had, and windows that already finished stay cached for next time. If the provider's rate limit is reached, everything pauses and you get a notification; Continue picks up exactly where it stopped. If the app closes mid-run, the queue resumes on the next launch.</p>
         </div>
         {s.failed.length > 0 && (
           <div className="block">
