@@ -3,7 +3,7 @@
 //   - the scheduled task's fire endpoint (POST /fire), which "runs" the batch: after a delay it reads
 //     inbox/<batch>.txt, writes outbox/<batch>/<request id>.json plus DONE on the branch claude/batch-<batch>.
 //
-// Standalone: `npm run mock-routine` (port 8788). Point the app at it with
+// Standalone: `node scripts/mock-routine-server.mjs` (port 8788). Point the app at it with
 //   ai.routine.fireUrl = http://127.0.0.1:8788/fire   and   ai.routine.githubApi = http://127.0.0.1:8788
 //
 // Behaviour is changed while it runs:

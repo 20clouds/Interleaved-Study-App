@@ -4,7 +4,7 @@
 // Claude's refusal fallback, Gemini response schemas, minimal thinking or a small output limit; redirects, oversized
 // and stalled bodies), and a default "smart" answer for each prompt that matches its Gemini response schema.
 //
-// Standalone: `npm run mock-ai`. Tests start it on a random port and point settings.ai.baseUrl at it.
+// Standalone: `node scripts/mock-ai-server.mjs`. Tests start it on a random port and point settings.ai.baseUrl at it.
 import http from 'node:http'
 import { pathToFileURL } from 'node:url'
 

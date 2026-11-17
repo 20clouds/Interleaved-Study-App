@@ -1,7 +1,10 @@
 # DESIGN.md: Interleaved Study
-> The design contract for the app's interface. Re-read before every UI task. Components use these tokens only
-> (`src/renderer/src/style.css`, `:root`). Written 2026-11-17 with the site-design-director skill, adapted from
-> websites to a Mac app (no marketing page order, no LCP or scroll reveals, product-UI motion only).
+> The design contract for the app's interface. Re-read before every UI task. Views use these tokens only
+> (`app/Sources/InterleavedStudy/Theme.swift`). Written 2026-11-17 with the site-design-director skill, adapted from
+> websites to a Mac app (no marketing page order, no LCP or scroll reveals, product-UI motion only). Since the native
+> rewrite (2026-11-17) the interface is SwiftUI: standard Mac structure (source-list sidebar, toolbar, outline table,
+> inspector, Settings window, menu bar extra, sheets) carries these tokens; CSS names below map to `Ink.*`,
+> `Hue.color(_:)` and `Typeset.*`.
 
 ## Brief
 - **Subject:** a Mac app that turns a student's lecture files into topics, then runs timed study blocks that mix
@@ -22,7 +25,7 @@
 - **Spectacle level:** 1 (Alive) because this is a tool used for hours; motion must never pull attention from
   reading. Only the block-advance moment and hover/press feedback move.
 - **Signature motif:** the interleave line, because interleaving across courses is the method the app exists for.
-- **Technology:** inline SVG drawn from data, no libraries. Budget: 0 KB extra JS, no animation loop.
+- **Technology:** drawn from data with SwiftUI `Canvas` (`Lanes.swift`), no libraries, no animation loop.
 - **Reduced motion:** every transition is removed; nothing depends on motion to be understood.
 
 ## Direction
@@ -91,7 +94,7 @@ No uppercase tracked labels. Hierarchy comes from ink-2 before size or weight. A
 - Hover/press 120ms ease-out; popover 160ms; dialog 200ms; toast 200ms; exits at 70%.
 - Easing `cubic-bezier(0.22, 1, 0.36, 1)` in, `ease-in` 120ms out. No bounce.
 - One orchestrated moment: when a new block starts, the toolbar strip slides one block left (300ms).
-- `prefers-reduced-motion`: all transitions and the slide are off.
+- Reduce Motion (System Settings): all transitions and the slide are off.
 - Never animate on keyboard-started actions beyond the state change itself.
 
 ## Watchlist items used
@@ -108,4 +111,9 @@ No uppercase tracked labels. Hierarchy comes from ink-2 before size or weight. A
 - Don't: put two filled primary buttons in one view region.
 
 ## Learned rules (from user corrections)
-- (none yet)
+- 2026-11-17: No system blue and no glowing buttons. The app's accent colour is a warm grey (`app/Resources/Assets.xcassets`),
+  default buttons in sheets use the ink primary style, and text actions are quiet ink-2 (`QuietLink`), never blue links.
+- 2026-11-17: Nothing that cannot be clicked may look clickable, and every button must look like one (bordered, or an
+  icon with its label). Check this visually, in the running app, not only in code.
+- 2026-11-17: Keep panes simple. The topic details pane shows the essentials; longer material (source text, schedule
+  and overrides, history) sits in sections that open on request.

@@ -1,7 +1,5 @@
-node_modules
-dist
-src-tauri/target
-src-tauri/gen
+engine/target
+build
 *.log
 .DS_Store
 .env
