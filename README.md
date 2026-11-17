@@ -1,127 +1,168 @@
-# Interleaved Study (Tauri + Rust)
+# Interleaved Study
 
-Interleaved practice with spaced repetition for lesson documents. You import lessons (Markdown, text, PDF, DOCX, and
-pictures with Gemini or the scheduled task), an AI
-splits them into topics, and the app schedules timed or pomodoro study sessions that mix topics across lessons and
-courses. It also tracks deadlines, a daily goal and progress.
+A Mac app that turns your lecture files into study topics, then runs timed study blocks that mix (interleave) topics
+across lessons and courses, with spaced-repetition reviews, deadlines and a daily goal.
 
-This is version 2: the Rust rewrite of the Electron app in `../interleaved-study`. The interface is the same React
-code; everything behind it (database, AI queue, timer, keys, menu, tray, notifications) is a Rust core running in a
-Tauri 2 shell. macOS is the only platform it is built and tested for.
+Import a lesson (Markdown, text, PDF, Word or a picture) and an AI splits it into topics. The app then decides what to
+study next: what is due for review, what is close to a deadline, and an order that switches between courses instead of
+working through one block at a time. You press Start and study; the timer, breaks and reviews are handled for you.
 
-## Requirements
+Version 2 is a native rewrite in [Tauri 2](https://tauri.app) and Rust with a new interface. Version 1 (Electron) is in
+this repository's history. macOS is the only platform it is built and tested for.
 
-- macOS 12 or later
+## What it does
+
+- **Today:** what is due, the suggested study order, your daily goal and the next deadlines, with one Start button.
+- **Study:** timed or pomodoro sessions that step between topics from different courses. Shows the topic, the lecture
+  file to open and the clock. You rate each block when it ends, and can take a quick quiz on the topic.
+- **Library:** courses, lessons and topics, with search, and an inspector to edit or re-organize any of them.
+- **Plan:** deadlines on a calendar. Deadlines can be read from a spreadsheet (xlsx, xls, csv).
+- **Progress:** mastery per course and topic, streaks and study history.
+- **AI Queue:** every AI request in one queue you can pause, retry or cancel.
+- Menu bar timer, notifications, and keyboard shortcuts for everything you do daily.
+
+## The design: "Lanes"
+
+Each course is a lane, and the study order is one thread that steps between lanes. Mixing courses is something you
+see, not a setting: the line appears on Today (the order coming up), during a session (what you did and what is next)
+and in the toolbar. The chrome is ink on warm paper, with a dark mode; course colours are the only colours. Topic names
+use a reading serif, and motion is limited to small feedback so it never pulls attention from studying.
+
+The full design contract, with tokens and rules, is in [DESIGN.md](DESIGN.md). Read it before changing the interface.
+
+## Build and install
+
+You need:
+
+- macOS 12 or later, with the Xcode command line tools
 - Node 20+ and npm
 - Rust (stable) through rustup. If `cargo` is not on your PATH:
   ```bash
   export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
   ```
-- Xcode command line tools
 
-## Commands
+Then:
+
+```bash
+git clone https://github.com/20clouds/Interleaved-Study-App.git
+```
+
+```bash
+cd Interleaved-Study-App && npm install && npm run build
+```
+
+The app lands in `src-tauri/target/release/bundle/macos/Interleaved Study.app`. Copy it to `/Applications` to
+install. It is ad-hoc signed, not notarized, so macOS may ask you to confirm the first time you open it.
 
 | Command | What it does |
 | --- | --- |
-| `npm install` | Install the JavaScript dependencies |
 | `npm run dev` | Run the app with hot reload (Vite on `127.0.0.1:5183`, debug Rust build) |
-| `npm run build` | Typecheck, build the UI and produce the release `.app` |
+| `npm run build` | Typecheck, build the interface and produce the release `.app` |
 | `npm run typecheck` | TypeScript only |
-| `npm test` | Rust unit tests (`cd src-tauri && cargo test --lib` runs the same 45 tests) |
-| `npm run mock-ai` | Mock AI server on `127.0.0.1:8787` (Gemini, Claude and OpenAI routes; `GET /_mock` lists requests and the files they carried, `POST /_mock {"rejectFiles":"mime"\|"bare"}` refuses files) |
-| `npm run mock-routine` | Mock Claude scheduled task and GitHub mailbox on `127.0.0.1:8788` (see the top of `scripts/mock-routine-server.mjs`) |
+| `npm test` | Rust unit tests |
+| `npm run mock-ai` | Mock AI server on `127.0.0.1:8787` (Gemini, Claude and OpenAI routes, scriptable failures) |
+| `npm run mock-routine` | Mock Claude scheduled task and GitHub mailbox on `127.0.0.1:8788` |
 
-The release bundle lands in `src-tauri/target/release/bundle/macos/Interleaved Study.app`. It is ad-hoc signed, not
-notarized, so it is meant for this Mac; copy it to `/Applications` to install.
-
-## Where things are stored
-
-- **Library:** `~/Library/Application Support/Interleaved Study 2/study.sqlite` (SQLite, WAL, FTS5 search).
-- **First run:** if that folder has no library yet and the Electron app's
-  `~/Library/Application Support/Interleaved Study/study.sqlite` exists, it is copied over. The old folder is only
-  read. The copy happens once, so anything studied in the old app afterwards does not follow; to adopt again, quit the
-  app and delete the `Interleaved Study 2` folder.
-- **API keys:** one macOS Keychain item (service `Interleaved Study`, account `api-keys`). Keys are never written to
-  the database or to a backup. Keys saved by the Electron app are not carried over; enter them again in Settings.
-  Because the build is ad-hoc signed, macOS may ask for Keychain access again after a rebuild.
-- **Backups:** File > Export Backup writes one JSON file with everything except keys. The format is the same as the
-  Electron app's (restoring an Electron backup here, or the reverse, has not been tested). Restore keeps this machine's keys, provider addresses and
-  scheduled-task setup, and first writes a `before-restore-<time>.json` safety copy next to the library.
+Don't run `npm test` or a second build while `npm run dev` is running: overlapping Rust builds can corrupt the build
+cache. If linking fails with "symbols not found", run `cargo clean -p interleaved-study` in `src-tauri`.
 
 ## AI providers
 
-Google Gemini, Anthropic Claude and OpenAI over their HTTPS APIs with your own key, plus a "Claude scheduled task"
-provider that uses a Claude subscription through a GitHub mailbox repository (see the comment at the top of
+Use Google Gemini, Anthropic Claude or OpenAI with your own API key, or the "Claude scheduled task" provider, which
+runs the work on a Claude subscription through a private GitHub mailbox repository (see the comment at the top of
 `src-tauri/src/routine.rs`).
 
-Requests go through one persisted queue (`src-tauri/src/queue.rs`):
+All requests go through one saved queue (`src-tauri/src/queue.rs`):
 
 - one request at a time for API providers;
-- HTTP 429 pauses everything and keeps all work; **Continue** on the Queue page picks up where it stopped;
-- 5xx and network errors retry with backoff, up to 6 attempts, then the job is marked failed and can be retried;
+- a rate limit (HTTP 429) pauses everything and keeps all work; **Continue** on the AI Queue page picks up where it
+  stopped;
+- server and network errors retry with backoff, up to 6 attempts, then the job is marked failed and can be retried;
 - any queued or running job can be cancelled, and the request in flight stops at once;
 - finished requests are cached, so a retry or re-import does not pay twice.
 
 ### Lesson files sent as files
 
-Gemini (at Google's own address) and the Claude scheduled task get PDFs and pictures as the files themselves, so the
-model reads the text and an image of every page; Gemini also gets Word files. Claude API and OpenAI get the text the
-Mac extracts. Settings > Lesson files, the import dialog and each lesson row say which applies (`src-tauri/src/files.rs`
-is the one table both the core and the UI use).
+Gemini and the scheduled task receive PDFs and pictures as the files themselves, so the model reads the text and an
+image of every page; Gemini also receives Word files. Claude API and OpenAI receive the text the Mac extracts.
+Settings > Lesson files, the import dialog and each lesson row say which applies (`src-tauri/src/files.rs`).
 
-- The file is read from disk when the request goes out, checked against the hash taken at import and against its
-  type's signature, and never stored in the database or a job. A moved or changed file goes as text, with a note.
-- A scanned PDF or a picture (no text on the Mac) gets a `read` job first: the model writes out its text, which becomes
-  the lesson, then it is organized as usual.
-- Limits: Gemini 15 MB inline; the scheduled task 20 MB and 100 PDF pages. Larger files go as extracted text.
-- A 400 while a file is attached retries once without it and learns nothing else; only an explicit "MIME type not
-  supported" is remembered for that model. An answer given without the file is never cached as if it had the file.
-- Scheduled task: a batch's files go up as one commit with no parent on the branch `files-<batch>` (numbered names,
-  never the file name), deleted when the batch ends, fails or is given up on; launch sweeps leftovers. The mailbox's
-  privacy is checked again before every upload. GitHub may keep deleted objects for a while, and the run's claude.ai
-  session keeps what it read.
+- The file is read from disk when the request goes out and checked against the hash taken at import. It is never
+  stored in the database. A moved or changed file goes as text, with a note.
+- A scanned PDF or a picture with no text first gets a `read` job: the model writes out its text, which becomes the
+  lesson.
+- Limits: Gemini 15 MB; the scheduled task 20 MB and 100 PDF pages. Larger files go as extracted text.
+- Scheduled task: a batch's files go up on a temporary branch of the mailbox (numbered names, never the file name)
+  that is deleted when the batch ends. The mailbox must be private; this is checked again before every upload.
 
-Changing a provider's base URL to a non-official host asks for confirmation in a native dialog, because requests
-carry the API key.
+Changing a provider's base URL to an unofficial host asks for confirmation first, because requests carry your API key.
 
-## Layout
+## Your data and keys
+
+- **Library:** `~/Library/Application Support/Interleaved Study 2/study.sqlite` (SQLite with full-text search).
+- **API keys:** stored in the macOS Keychain as one item (service `Interleaved Study`, account `api-keys`). They are
+  never written to the database, a backup or this repository. Because the build is ad-hoc signed, macOS may ask for
+  Keychain access again after a rebuild.
+- **Backups:** File > Export Backup writes one JSON file with everything except keys. Restoring first saves a
+  `before-restore-<time>.json` copy next to the library and keeps this Mac's keys and provider setup.
+- **Coming from version 1:** on first run, if there is no library yet and the Electron app's library exists, it is
+  copied over once (the old one is only read). Keys are not carried over; enter them again in Settings.
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| Cmd+1 … Cmd+6 | Today, Study, Library, Plan, Progress, AI Queue |
+| Cmd+, | Settings |
+| Cmd+O / Cmd+Shift+O | Import lessons / import a folder |
+| Cmd+Shift+S | Start the next suggested session |
+| Cmd+Shift+P | Pause or resume the timer |
+
+Closing the window hides it; the app and the menu bar timer keep running. Click the menu bar or Dock icon to bring it
+back, and Cmd+Q to quit. Confirmations for destructive actions never make the destructive button the Return default.
+
+## Project layout
 
 ```
-src/renderer/        React UI (views, components, state.tsx, api.ts = the bridge to the core)
-src/shared/          Types and pure helpers shared with the UI (API method list, scheduling, streaks)
+DESIGN.md            The interface's design contract ("Lanes")
+src/renderer/        React interface: views/, components/ (Lanes.tsx draws the interleave line), state.tsx,
+                     style.css (design tokens), api.ts (the bridge to the Rust core)
+src/shared/          Types and pure helpers shared with the interface (API method list, scheduling, streaks)
 src-tauri/src/
   lib.rs             App setup: window, menu, tray, notifications, one-second heartbeat
   commands.rs        Every call the window can make, dispatched by method name
   core.rs            App state and domain operations (courses, lessons, topics, reviews)
-  store.rs           SQLite store; same table layout as the Electron version
+  store.rs           SQLite store
+  types.rs           Stored records, matching the TypeScript types
   queue.rs           AI request queue: pause, rate limits, retries, cancel
   jobs.rs            Job handlers: organize, dedupe, enrich, quiz, grade, deadlines
   provider.rs        Gemini / Claude / OpenAI adapters, per-model capability fallback
   routine.rs         Claude scheduled-task provider
+  aijson.rs          Reading JSON out of model answers safely
   importer.rs        File and folder import (md, txt, pdf, docx, pictures)
-  files.rs           Which file types go to which provider as files; loading an attachment
+  files.rs           Which file types go to which provider as files
   preprocess.rs      Local text cleanup, paragraph numbering, AI windows
   organize.rs        Organize prompts, validation, merging
+  history.rs         Keeps study history when topics are re-imported or re-organized
   session.rs         Timed and pomodoro session state machine
   sched.rs           Spaced-repetition scheduler and mastery model
-  deadlines.rs       Spreadsheet reading (xlsx, xls, csv) and deadline extraction
+  deadlines.rs       Spreadsheet reading and deadline extraction
   keys.rs            Keychain storage
   settings.rs        Defaults, migrations, base-URL safety check
-  devbridge.rs       Debug builds only: the API over loopback HTTP (see below)
-scripts/mock-ai-server.mjs   Mock AI API with scripted failures
+  util.rs            Shared helpers (dates, names, ordering)
+  devbridge.rs       Debug builds only: the API over loopback HTTP
+scripts/             Mock AI and mock scheduled-task servers
 ```
 
 ## Testing without touching your library or spending tokens
 
-Three environment variables exist for development:
-
 | Variable | Effect |
 | --- | --- |
-| `INTERLEAVED_STUDY_DATA=<folder>` | Use this folder for the library instead of Application Support (and skip adoption) |
-| `INTERLEAVED_STUDY_KEYS='{"gemini":"test-key"}'` | Supply keys from the environment; the Keychain is not read or written |
+| `INTERLEAVED_STUDY_DATA=<folder>` | Use this folder for the library instead of Application Support |
+| `INTERLEAVED_STUDY_KEYS='{"gemini":"test-key"}'` | Supply keys from the environment; the Keychain is not touched |
 | `INTERLEAVED_STUDY_DEV_PORT=5184` | Debug builds only: serve the API and events on this loopback port |
 
-A typical test run against a copy of the real library:
+A typical run against a copy of your library and the mock AI server:
 
 ```bash
 mkdir -p /tmp/is-test && cp ~/Library/Application\ Support/Interleaved\ Study\ 2/study.sqlite /tmp/is-test/
@@ -135,33 +176,19 @@ npm run mock-ai
 INTERLEAVED_STUDY_DATA=/tmp/is-test INTERLEAVED_STUDY_KEYS='{"gemini":"test-key"}' INTERLEAVED_STUDY_DEV_PORT=5184 npm run dev
 ```
 
-With the dev port set, the UI at `http://127.0.0.1:5183` also works in an ordinary browser, and the core can be
-driven directly:
+Then set the Gemini base URL to `http://127.0.0.1:8787` in Settings. With the dev port set, the interface at
+`http://127.0.0.1:5183` also works in an ordinary browser (add `?view=today`, `board`, `session`, `plan`,
+`progress`, `queue` or `settings` to open a view directly), and the core can be driven directly:
 
 ```bash
 curl -s -X POST 127.0.0.1:5184/api -d '{"method":"queueStatus","args":[]}'
 ```
 
-`GET /events` on the same port is a server-sent event stream of what the core emits (`queue`, `session`, `data`).
-The dev bridge is compiled out of release builds.
-
-To send AI requests to the mock, set the Gemini base URL to `http://127.0.0.1:8787` in Settings (the app asks for
-confirmation). The mock answers every prompt sensibly by default and can be scripted to fail (429 with Retry-After,
-5xx, invalid JSON, stalled responses); see the header of `scripts/mock-ai-server.mjs`.
-
-## Native behaviour worth knowing
-
-- Closing the window hides it; the app and the menu bar timer keep running. Click the menu bar icon or the Dock icon
-  to bring it back. Cmd+Q quits.
-- The window's size and position are saved when it closes and when the app quits.
-- Shortcuts: Cmd+1 to Cmd+5 switch views, Cmd+, opens Settings, Cmd+O / Cmd+Shift+O import files or a folder,
-  Cmd+Shift+S starts the next suggested session, Cmd+Shift+P pauses or resumes the timer.
-- Destructive confirmations (restore, delete, custom base URL) never have the destructive button as the Return-key
-  default.
+`GET /events` on the same port streams what the core emits (`queue`, `session`, `data`). The dev bridge is compiled
+out of release builds.
 
 ## Known limits
 
-- Without Gemini or the scheduled task, PDF and DOCX text is extracted on the Mac (best effort); Markdown gives the
+- macOS only, and not notarized or signed with a developer identity.
+- Without Gemini or the scheduled task, PDF and Word text is extracted on the Mac (best effort); Markdown gives the
   cleanest topics.
-- Not notarized or signed with a developer identity.
-- macOS only.
