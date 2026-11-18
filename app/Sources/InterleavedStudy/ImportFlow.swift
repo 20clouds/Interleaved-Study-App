@@ -199,7 +199,8 @@ struct SheetFrame<Content: View, Actions: View>: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
             Divider()
-            HStack { Spacer(); actions }.padding(16)
+            // Footer buttons are secondary unless they say otherwise, 12pt apart.
+            HStack(spacing: 12) { Spacer(); actions }.buttonStyle(.secondary).padding(16)
         }
         .frame(width: width)
         .fixedSize(horizontal: false, vertical: true)

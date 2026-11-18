@@ -4,10 +4,12 @@ import SwiftUI
 
 struct InspectorView: View {
     @Environment(AppModel.self) private var app
+    /// The pane runs up under the toolbar; its content starts below it, where the page's does.
+    let toolbarHeight: CGFloat
 
     var body: some View {
         if let id = app.selected, let t = app.topics[id] {
-            TopicDetail(t: t).id(t.id)
+            TopicDetail(t: t, toolbarHeight: toolbarHeight).id(t.id)
         } else {
             Text("Select a topic to see why it is due, its history and overrides.")
                 .font(Typeset.body).foregroundStyle(Ink.ink2).multilineTextAlignment(.center)
@@ -24,6 +26,7 @@ private enum PushUnit: String, CaseIterable, Identifiable {
 private struct TopicDetail: View {
     @Environment(AppModel.self) private var app
     let t: Topic
+    let toolbarHeight: CGFloat
 
     @State private var notes = ""
     @State private var source: TopicText?
@@ -60,9 +63,9 @@ private struct TopicDetail: View {
                     }
                     Text(t.why(now)).font(Typeset.small).foregroundStyle(t.isDue(now) ? Ink.due : Ink.ink2).fixedSize(horizontal: false, vertical: true)
                 }
-                HStack(spacing: 8) {
+                HStack(spacing: 12) {
                     Button { Task { await studyNow() } } label: { Label("Study Now", systemImage: "play.fill") }.buttonStyle(.primary)
-                    Button { quiz = true } label: { Label("Quiz", systemImage: "questionmark.circle") }
+                    Button { quiz = true } label: { Label("Quiz", systemImage: "questionmark.circle") }.buttonStyle(.secondary)
                 }
                 if !t.summary.isEmpty { Text(t.summary).font(Typeset.serif(13)).foregroundStyle(Ink.ink).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
                 if !t.terms.isEmpty { section("Key terms") { Chips(items: t.terms) } }
@@ -73,9 +76,9 @@ private struct TopicDetail: View {
                         .frame(minHeight: 70)
                         .focused($notesFocused)
                         .scrollContentBackground(.hidden)
-                        .padding(4)
+                        .padding(.horizontal, 4).padding(.vertical, 6)
                         .background(RoundedRectangle(cornerRadius: 6).fill(Ink.raised))
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Ink.line2, lineWidth: 0.5))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Ink.line2, lineWidth: 1))
                         .onChange(of: notesFocused) { if !notesFocused { saveNotes() } }
                         .onDisappear(perform: saveNotes)
                 }
@@ -94,12 +97,17 @@ private struct TopicDetail: View {
                         app.selected = nil
                     }
                 } label: { Text("Delete Topic…") }
-                .buttonStyle(.borderless).foregroundStyle(Ink.due).font(Typeset.small)
+                .buttonStyle(.quiet).font(Typeset.small)
             }
             .font(Typeset.body)
             .padding(20)
+            .padding(.top, toolbarHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // Beside the toolbar AppKit insets this scroll view (or any content margin) by itself, and SwiftUI's hit
+        // testing misses that: everything was drawn lower than where it took clicks. So it ignores the toolbar's
+        // safe area and keeps clear of the toolbar with padding.
+        .ignoresSafeArea(edges: .top)
         .onAppear {
             notes = t.notes
             dueAt = date(t.due ?? nowMs + DAY)
@@ -157,17 +165,13 @@ private struct TopicDetail: View {
             if let src = source {
                 if let at = splitAt {
                     VStack(alignment: .leading, spacing: 6) {
-                        Picker("", selection: Binding(get: { at }, set: { splitAt = $0 })) {
-                            ForEach(Array(src.paras.enumerated()), id: \.offset) { i, p in
-                                Text(p.count > 220 ? p.prefix(220) + "…" : p).font(Typeset.serif(12)).foregroundStyle(i >= at ? Ink.ink : Ink.ink2).tag(i)
-                                    .selectionDisabled(i == 0)
-                            }
+                        ChoiceList(selection: Binding(get: { at }, set: { splitAt = $0 }), values: Array(src.paras.indices), spacing: 6, isDisabled: { $0 == 0 }) { i in
+                            let p = src.paras[i]
+                            Text(p.count > 220 ? p.prefix(220) + "…" : p).font(Typeset.serif(12)).foregroundStyle(i >= at ? Ink.ink : Ink.ink2)
                         }
-                        .pickerStyle(.radioGroup)
-                        .labelsHidden()
-                        TextField("Name of the new topic (optional)", text: $splitName, prompt: Text("Taken from its first sentence if empty")).textFieldStyle(.roundedBorder)
-                        HStack {
-                            Button("Cancel") { splitAt = nil }
+                        TextField("Name of the new topic (optional)", text: $splitName, prompt: Text("Taken from its first sentence if empty")).field()
+                        HStack(spacing: 8) {
+                            Button("Cancel") { splitAt = nil }.buttonStyle(.secondary)
                             Button("Split Here") {
                                 let (id, name) = (t.id, splitName)
                                 Task {
@@ -181,6 +185,7 @@ private struct TopicDetail: View {
                             .buttonStyle(.primary)
                             .disabled(at == 0)
                         }
+                        .controlSize(.small)
                     }
                 } else {
                     let text = src.excerpt ?? (src.paras.isEmpty ? "No stored text." : src.paras.joined(separator: "\n\n"))
@@ -197,10 +202,11 @@ private struct TopicDetail: View {
                         Text("This is the topic’s paragraphs. The AI’s exact cut is stored for lessons organized from now on; re-organize this lesson to see it here.")
                             .font(Typeset.small).foregroundStyle(Ink.ink2)
                     }
-                    HStack {
-                        Button(showAll ? "Show Less" : "Show All") { showAll.toggle() }.buttonStyle(.borderless)
+                    HStack(spacing: 8) {
+                        Button(showAll ? "Show Less" : "Show All") { showAll.toggle() }.buttonStyle(.quiet)
+                        Spacer()
                         if src.paras.count > 1 {
-                            Button { splitAt = (src.paras.count + 1) / 2 } label: { Label("Split This Topic", systemImage: "arrow.triangle.branch") }
+                            Button { splitAt = (src.paras.count + 1) / 2 } label: { Label("Split This Topic", systemImage: "arrow.triangle.branch") }.buttonStyle(.secondary)
                         }
                     }
                     .controlSize(.small)
@@ -243,38 +249,38 @@ private struct TopicDetail: View {
                 GridRow {
                     Text("Due").foregroundStyle(Ink.ink2)
                     HStack(spacing: 6) {
-                        DatePicker("Due", selection: $dueAt, displayedComponents: .date).labelsHidden().datePickerStyle(.field)
-                        Button("Set") { over(["kind": "due", "at": dueAt.ms], "Due date set") }.fixedSize()
-                        Button("Now") { over(["kind": "dueNow"], "Due now") }.fixedSize().help("Make it due now")
+                        DateField(date: $dueAt)
+                        Button("Set") { over(["kind": "due", "at": dueAt.ms], "Due date set") }
+                        Button("Now") { over(["kind": "dueNow"], "Due now") }.help("Make it due now")
                     }
                 }
                 GridRow {
                     Text("Push back").foregroundStyle(Ink.ink2)
                     HStack(spacing: 6) {
                         NumberField(value: push, range: 1...999, width: 44) { push = $0 }
-                        Picker("Unit", selection: $pushUnit) { ForEach(PushUnit.allCases) { Text($0.rawValue).tag($0) } }.labelsHidden().fixedSize()
-                        Button("Push") { over(["kind": "push", "amount": push, "unit": pushUnit.rawValue], "Pushed \(Int(push)) \(push == 1 ? String(pushUnit.rawValue.dropLast()) : pushUnit.rawValue)") }.fixedSize()
+                        MenuChoice(selection: $pushUnit, options: PushUnit.allCases.map { ($0.rawValue, $0) })
+                        Button("Push") { over(["kind": "push", "amount": push, "unit": pushUnit.rawValue], "Pushed \(Int(push)) \(push == 1 ? String(pushUnit.rawValue.dropLast()) : pushUnit.rawValue)") }
                     }
                 }
                 GridRow {
                     Text("Score").foregroundStyle(Ink.ink2)
                     HStack(spacing: 6) {
                         NumberField(value: score, range: 0...100, width: 44) { score = $0 }
-                        Button("Set") { over(["kind": "score", "value": score], "Score set") }.fixedSize()
+                        Button("Set") { over(["kind": "score", "value": score], "Score set") }
                         if t.override != nil { Button("Clear") { over(["kind": "clearScore"], "Score override cleared") } }
                     }
                 }
             }
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
                 Button("Mark Solid for 30 Days") { over(["kind": "solid"], "Marked solid for 30 days") }
                 Button("Reset…", role: .destructive) {
                     app.confirmThen("Reset this topic?", detail: "Clears its schedule, reviews, time spent and score override. It becomes new again.", ok: "Reset", danger: true, done: "Topic reset") {
                         try await Engine.run("override", id, ["kind": "reset"])
                     }
                 }
-                .foregroundStyle(Ink.due)
             }
         }
+        .buttonStyle(.secondary)
         .controlSize(.small)
     }
 
@@ -308,7 +314,7 @@ private struct QuizSheet: View {
         SheetFrame(title: "Quiz: \(t.name)", width: 620) {
             if let score {
                 Text("Quiz score \(Int((score * 100).rounded()))%. How well do you know it? The quiz counts double.")
-                HStack {
+                HStack(spacing: 8) {
                     ForEach(Rating.allCases) { r in
                         Button(r.label) {
                             let id = t.id
@@ -316,7 +322,7 @@ private struct QuizSheet: View {
                                 if await app.act("Review recorded", { try await Engine.run("reviewTopic", id, r.rawValue, score, 0) }) != nil { dismiss() }
                             }
                         }
-                        .controlSize(.large)
+                        .buttonStyle(.secondary)
                     }
                 }
             } else {
@@ -387,7 +393,7 @@ struct NewCourseSheet: View {
     @ViewBuilder private var nameStep: some View {
         TextField("Course name", text: $name, prompt: Text("e.g. Organic Chemistry or CHM110"))
             .font(Typeset.serif(15))
-            .textFieldStyle(.roundedBorder)
+            .field()
             .onSubmit { if !clean.isEmpty && !taken { step = 2 } }
         if taken { Text("There is already a course called “\(clean)”.").font(Typeset.small).foregroundStyle(Ink.due) }
         Text("Colour").font(Typeset.heading)
@@ -418,10 +424,11 @@ struct NewCourseSheet: View {
     @ViewBuilder private var filesStep: some View {
         (Text("Add the lecture files for ") + Text(clean).bold() + Text(". Each file becomes a lesson, which the AI then splits into topics. You can skip this and add files later."))
             .fixedSize(horizontal: false, vertical: true)
-        HStack {
+        HStack(spacing: 12) {
             Button { pick("files") } label: { Label("Upload Files…", systemImage: "doc") }
             Button { pick("folder") } label: { Label("Upload a Folder…", systemImage: "folder") }
         }
+        .buttonStyle(.secondary)
         Text("Or drop files and folders anywhere in the window. .md, .txt, .pdf or .docx.").font(Typeset.small).foregroundStyle(Ink.ink2)
         if !staged.isEmpty {
             List {
@@ -431,7 +438,7 @@ struct NewCourseSheet: View {
                         Text((p as NSString).lastPathComponent).lineLimit(1)
                         Text((p as NSString).deletingLastPathComponent).font(Typeset.small).foregroundStyle(Ink.ink3).lineLimit(1).truncationMode(.head)
                         Spacer()
-                        Button { app.courseWizard?.removeAll { $0 == p } } label: { Image(systemName: "xmark") }.buttonStyle(.borderless).help("Remove")
+                        Button { app.courseWizard?.removeAll { $0 == p } } label: { Image(systemName: "xmark") }.buttonStyle(.quiet).help("Remove")
                     }
                 }
             }
@@ -503,9 +510,15 @@ struct AddTopicSheet: View {
                 TextField("Topic name", text: $name, prompt: Text("e.g. Michaelis-Menten kinetics"))
                 LabeledContent("Text to study") {
                     TextEditor(text: $text).font(Typeset.body).frame(height: 150)
-                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Ink.line2, lineWidth: 0.5))
+                        .scrollContentBackground(.hidden)
+                        .padding(.horizontal, 2).padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(Ink.raised))
+                        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Ink.line2, lineWidth: 0.5))
+                        // An editor has no text baseline, so the form would pin the label to its top edge; put the
+                        // label's baseline on the editor's first line instead.
+                        .alignmentGuide(.firstTextBaseline) { $0[.top] + 4 + NSFont.systemFont(ofSize: 13).ascender }
                 }
-                Toggle("Let the AI add a summary, key terms, prerequisites and difficulty (one small request)", isOn: $enrich)
+                Toggle("Let the AI add a summary, key terms, prerequisites and difficulty (one small request)", isOn: $enrich).toggleStyle(.check)
             }
         } actions: {
             Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)

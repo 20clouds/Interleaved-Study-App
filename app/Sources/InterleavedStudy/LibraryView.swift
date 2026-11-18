@@ -49,10 +49,10 @@ struct LibraryView: View {
                 hits = Set((try? await Engine.call("search", q) as [String]) ?? [])
             }
             .toolbar { toolbar }
-            // The details pane belongs to a list of topics; the course shelf has nothing to select.
-            .inspector(isPresented: Binding(get: { app.library.inspector && showsList }, set: { app.library.inspector = $0 })) {
-                InspectorView().inspectorColumnWidth(min: 300, ideal: 360, max: 520)
-            }
+            // The details pane is the window's (RootView), so it gets its own part of the toolbar; it shows beside a
+            // list of topics, never the course shelf.
+            .onChange(of: showsList, initial: true) { app.libraryListing = showsList }
+            .onDisappear { app.libraryListing = false }
             .sheet(isPresented: $adding) { AddTopicSheet() }
             .alert(renaming?.title ?? "", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { r in
                 RenameField(initial: r.value) { v in
@@ -80,9 +80,9 @@ struct LibraryView: View {
         if let d = app.data {
             if d.courses.isEmpty {
                 EmptyState(title: "Create your first course", message: "A course is a folder for one subject. Give it a name and a colour, then upload lecture files or a whole folder, or start empty and add them later. Each file becomes a lesson. PDF and DOCX work on a best-effort basis; .md gives the cleanest topics. You can also drop files anywhere in this window.") {
-                    HStack {
+                    HStack(spacing: 12) {
                         Button { app.courseWizard = [] } label: { Label("New Course", systemImage: "folder.badge.plus") }.buttonStyle(.primary)
-                        Button { adding = true } label: { Label("Add a Topic by Hand", systemImage: "plus") }
+                        Button { adding = true } label: { Label("Add a Topic by Hand", systemImage: "plus") }.buttonStyle(.secondary)
                     }
                 }
             } else if app.scope == .all && !filtering {
@@ -167,10 +167,10 @@ struct LibraryView: View {
         if groups.isEmpty {
             if let cid = app.openCourse, !filtering, !d.docs.contains(where: { $0.courseId == cid }) {
                 EmptyState(title: "No lessons yet", message: "Upload lecture files or a whole folder; each file becomes a lesson in \(app.courses[cid]?.name ?? "this course"). You can also drop them anywhere in this window.") {
-                    HStack {
+                    HStack(spacing: 12) {
                         Button { Task { await app.importer.pick("files", course: cid, app: app) } } label: { Label("Upload Files", systemImage: "doc") }.buttonStyle(.primary)
-                        Button { Task { await app.importer.pick("folder", course: cid, app: app) } } label: { Label("Upload a Folder", systemImage: "folder") }
-                        Button { adding = true } label: { Label("Add a Topic by Hand", systemImage: "plus") }
+                        Button { Task { await app.importer.pick("folder", course: cid, app: app) } } label: { Label("Upload a Folder", systemImage: "folder") }.buttonStyle(.secondary)
+                        Button { adding = true } label: { Label("Add a Topic by Hand", systemImage: "plus") }.buttonStyle(.secondary)
                     }
                 }
             } else {
@@ -209,15 +209,18 @@ struct LibraryView: View {
         switch app.library.density { case .compact: 24; case .cozy: 30; case .roomy: 36 }
     }
 
+    // Each cell is hosted on its own, and when a lesson folds, SwiftUI can still update the cells of the rows going
+    // away (for accessibility, say) after they've lost the window's environment. So the cells that read the model
+    // are handed it.
     @TableColumnBuilder<LibraryRow, Never> private var columns: some TableColumnContent<LibraryRow, Never> {
-        TableColumn("Topic") { row in NameCell(row: row) }
+        TableColumn("Topic") { row in NameCell(row: row).environment(app) }
             .width(min: 200, ideal: 280)
             .customizationID("name")
             .disabledCustomizationBehavior(.visibility)
         TableColumn("Status") { row in
             switch row {
             case .topic(let t): StatusChip(status: t.status(app.now))
-            case .lesson(let d): DocState(doc: d)
+            case .lesson(let d): DocState(doc: d).environment(app)
             case .unit: EmptyView()
             }
         }
@@ -239,7 +242,7 @@ struct LibraryView: View {
             .width(min: 60, ideal: 76)
             .alignment(.trailing)
             .customizationID("due")
-        TableColumn("Mastery") { row in MasteryCell(row: row) }
+        TableColumn("Mastery") { row in MasteryCell(row: row).environment(app) }
             .width(min: 96, ideal: 104)
             .customizationID("mastery")
     }
@@ -420,7 +423,7 @@ private struct DocState: View {
         switch doc.status {
         case "awaiting":
             HStack(spacing: 6) {
-                Button("Organize") { Task { await app.importer.estimate([doc.id], app: app) } }.buttonStyle(.bordered).controlSize(.small)
+                Button("Organize") { Task { await app.importer.estimate([doc.id], app: app) } }.buttonStyle(.secondary).controlSize(.small)
                     .help("Not organized yet: the AI names its topics, groups units and writes summaries")
             }
             .font(Typeset.small)
@@ -434,8 +437,8 @@ private struct DocState: View {
         case "needs", "error":
             HStack(spacing: 6) {
                 Text("Needs organizing").foregroundStyle(Ink.due).help(doc.error ?? "")
-                Button { app.perform("Retrying") { try await Engine.run("retryDoc", doc.id) } } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.borderless).help("Retry organizing")
+                Button { app.perform("Retrying") { try await Engine.run("retryDoc", doc.id) } } label: { Label("Retry Organizing", systemImage: "arrow.clockwise").labelStyle(.iconOnly) }
+                    .buttonStyle(.quiet).help("Retry organizing")
             }
             .font(Typeset.small)
         default:
@@ -471,10 +474,10 @@ private struct CourseHead: View {
             let due = topics.filter { $0.isDue(app.now) }.count
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 4) {
-                    Button { app.scope = .all } label: { Label("All Courses", systemImage: "chevron.left") }.buttonStyle(QuietLink())
+                    Button { app.scope = .all } label: { Label("All Courses", systemImage: "chevron.left") }.buttonStyle(.quiet)
                     if app.scope != .course(c.id) {
                         Image(systemName: "chevron.right").font(.system(size: 9)).foregroundStyle(Ink.ink3)
-                        Button(c.name) { app.scope = .course(c.id) }.buttonStyle(QuietLink())
+                        Button(c.name) { app.scope = .course(c.id) }.buttonStyle(.quiet)
                     }
                 }
                 .font(Typeset.small)
@@ -483,13 +486,14 @@ private struct CourseHead: View {
                     Text(c.name).font(Typeset.title).onTapGesture(count: 2, perform: rename).help("Double-click to rename")
                     CourseMenu(course: c, rename: rename)
                     Spacer()
-                    Button { adding = true } label: { Label("Add Topic", systemImage: "plus") }
+                    Button { adding = true } label: { Label("Add Topic", systemImage: "plus") }.buttonStyle(.secondary)
                     Menu {
                         Button("Files…") { Task { await app.importer.pick("files", course: c.id, app: app) } }
                         Button("A Folder…") { Task { await app.importer.pick("folder", course: c.id, app: app) } }
                         Divider()
                         Text("Each file becomes a lesson. You can also drop files anywhere in this window.")
                     } label: { Label("Upload", systemImage: "square.and.arrow.up") }
+                    .menuStyle(.button).buttonStyle(.secondary)
                     .menuIndicator(.hidden)
                     .fixedSize()
                     .help("Upload lessons to \(c.name)")
@@ -581,7 +585,7 @@ private struct Shelf: View {
                 Text("Courses").font(Typeset.title)
                 Text("\(plural(d.courses.count, "course")), \(plural(d.topics.count, "topic"))").foregroundStyle(Ink.ink2)
                 Spacer()
-                Button { adding = true } label: { Label("Add a Topic by Hand", systemImage: "plus") }.buttonStyle(.borderless)
+                Button { adding = true } label: { Label("Add a Topic by Hand", systemImage: "plus") }.buttonStyle(.secondary)
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 300), spacing: 20)], alignment: .leading, spacing: 20) {
                 ForEach(d.courses) { CourseCard(course: $0) }

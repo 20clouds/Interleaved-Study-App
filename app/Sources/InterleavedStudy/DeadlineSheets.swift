@@ -115,7 +115,7 @@ struct AiSheetImport: View {
                     Text("The AI found no dated items in this spreadsheet. Try mapping its columns manually.").foregroundStyle(Ink.ink2)
                 } else {
                     Table(res.items.indexed()) {
-                        TableColumn("") { r in Toggle("", isOn: Binding(get: { !skip.contains(r.id) }, set: { if $0 { skip.remove(r.id) } else { skip.insert(r.id) } })).labelsHidden() }.width(24)
+                        TableColumn("") { r in Toggle("", isOn: Binding(get: { !skip.contains(r.id) }, set: { if $0 { skip.remove(r.id) } else { skip.insert(r.id) } })).labelsHidden().toggleStyle(.check) }.width(24)
                         TableColumn("Title") { r in Text(r.value.title) + (dup(r.value) ? Text(" · already added").foregroundStyle(Ink.ink2) : Text("")) }
                         TableColumn("Date") { r in Text(Days.date(r.value.date).formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year())).monospacedDigit() }.width(130)
                         TableColumn("Course") { r in Text(r.value.courseName ?? "") }.width(120)
@@ -189,7 +189,7 @@ struct SheetImport: View {
                     Text("Month/day/year").tag(DeadlineMap.DateFormat.mdy)
                     Text("Year-month-day only").tag(DeadlineMap.DateFormat.ymd)
                 }
-                Toggle("First row is a header", isOn: $map.headerRow)
+                Toggle("First row is a header", isOn: $map.headerRow).toggleStyle(.check)
             }
             Text("Rows already imported (same title, date and course) are skipped, so re-importing the same sheet is safe. Course names that match an existing course are linked to it.")
                 .font(Typeset.small).foregroundStyle(Ink.ink2)

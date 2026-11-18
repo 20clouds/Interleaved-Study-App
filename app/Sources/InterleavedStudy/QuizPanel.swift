@@ -25,14 +25,14 @@ struct QuizPanel: View {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
                     Text("Preparing a quiz from this topic’s text (cached after the first time)…").foregroundStyle(Ink.ink2)
-                    Button("Cancel") { cancel("quiz") }
+                    Button("Cancel") { cancel("quiz") }.buttonStyle(.secondary)
                 }
             } else if let quiz, error == nil {
                 questions(quiz.questions)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(error ?? "No quiz available.").foregroundStyle(error == "Quiz cancelled." ? Ink.ink2 : Ink.due).textSelection(.enabled)
-                    Button { load() } label: { Label("Try Again", systemImage: "arrow.clockwise") }
+                    Button { load() } label: { Label("Try Again", systemImage: "arrow.clockwise") }.buttonStyle(.secondary)
                 }
             }
         }
@@ -77,37 +77,35 @@ struct QuizPanel: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("\(i + 1). \(q.q)").font(Typeset.serif(14, weight: .medium)).fixedSize(horizontal: false, vertical: true)
                     if q.type == "mc" {
-                        Picker("", selection: Binding(get: { answers[i] ?? "" }, set: { answers[i] = $0 })) {
-                            ForEach(Array((q.options ?? []).enumerated()), id: \.offset) { k, o in
-                                Text(o).foregroundStyle(checked ? (q.answer == .number(Double(k)) ? Ink.ok : answers[i] == String(k) ? Ink.due : Ink.ink) : Ink.ink).tag(String(k))
-                            }
+                        let options = q.options ?? []
+                        ChoiceList(selection: Binding(get: { answers[i] }, set: { answers[i] = $0 }), values: options.indices.map(String.init)) { k in
+                            Text(options[Int(k)!]).foregroundStyle(checked ? (q.answer == .number(Double(k)!) ? Ink.ok : answers[i] == k ? Ink.due : Ink.ink) : Ink.ink)
                         }
-                        .pickerStyle(.radioGroup)
-                        .labelsHidden()
                         .disabled(checked)
                         if checked, let why = q.why { Text(why).font(Typeset.small).foregroundStyle(Ink.ink2) }
                     } else {
                         TextField("Your answer", text: Binding(get: { answers[i] ?? "" }, set: { answers[i] = $0 }), axis: .vertical)
-                            .lineLimit(2...5).textFieldStyle(.roundedBorder).disabled(checked)
+                            .lineLimit(2...5).field().disabled(checked)
                         if checked { shortMark(i, q) }
                     }
                 }
             }
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 if !checked { Button("Check Answers") { checked = true }.buttonStyle(.primary) }
                 if checked && !shortIdx.isEmpty && !allMarked {
                     Button { Task { await gradeAi(qs, shortIdx) } } label: {
                         if grading { ProgressView().controlSize(.small) } else { Label("Grade Short Answers with AI", systemImage: "sparkles") }
                     }
+                    .buttonStyle(.secondary)
                     .disabled(grading)
                 }
-                if grading { Button("Cancel") { cancel("grade") }.buttonStyle(.borderless) }
+                if grading { Button("Cancel") { cancel("grade") }.buttonStyle(.quiet) }
                 if checked && allMarked {
                     Text("Score \(correct)/\(qs.count) (\(Int((score * 100).rounded()))%)").monospacedDigit()
                     Button(scoreLabel) { onScore(score) }.buttonStyle(.primary)
                 }
                 Spacer()
-                Button { load(true) } label: { Label("New Questions", systemImage: "arrow.clockwise") }.buttonStyle(.borderless)
+                Button { load(true) } label: { Label("New Questions", systemImage: "arrow.clockwise") }.buttonStyle(.quiet)
             }
         }
     }
@@ -118,12 +116,8 @@ struct QuizPanel: View {
             if let g = grades[i] {
                 Text("\(g.correct ? "Graded correct" : "Graded not correct"): \(g.feedback)").font(Typeset.small).foregroundStyle(g.correct ? Ink.ink : Ink.due)
             } else {
-                HStack(spacing: 8) {
-                    Toggle("I got it", isOn: Binding(get: { marks[i] == true }, set: { if $0 { marks[i] = true } }))
-                    Toggle("Not quite", isOn: Binding(get: { marks[i] == false }, set: { if $0 { marks[i] = false } }))
-                }
-                .toggleStyle(.button)
-                .controlSize(.small)
+                Segments(selection: Binding(get: { marks[i] }, set: { marks[i] = $0 }), options: [("I got it", true), ("Not quite", false)])
+                    .frame(width: 220)
             }
         }
     }

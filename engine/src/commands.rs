@@ -28,13 +28,6 @@ fn strs(a: &[Value], i: usize) -> Vec<String> {
 fn val<T: serde::Serialize>(v: T) -> Result<Value, String> { serde_json::to_value(v).map_err(|e| e.to_string()) }
 const DONE: Result<Value, String> = Ok(Value::Null);
 
-fn caps_info(app: &AppRef) -> Value {
-    json!({
-        "storeKind": "sqlite", "storeError": null, "safeStorage": true, "notifications": true, "tray": true, "dock": true,
-        "dataPath": app.data_dir.to_string_lossy(), "markitdown": null
-    })
-}
-
 fn key_flags(app: &AppRef) -> Value {
     let c = app.lock();
     Value::Object(SECRETS.iter().map(|p| (p.to_string(), json!(c.secret(p).is_some()))).collect())
@@ -52,9 +45,8 @@ pub async fn dispatch(app: &AppRef, method: &str, a: Vec<Value>) -> Result<Value
         // ---------- setup ----------
         "bootstrap" => {
             let (settings, has_key, model_caps) = { let c = app.lock(); (c.settings_raw.clone(), c.active_key().is_some(), c.store.kv_get::<Value>("modelCaps").unwrap_or(json!({}))) };
-            Ok(json!({ "settings": settings, "hasKey": has_key, "keys": key_flags(app), "caps": caps_info(app), "modelCaps": model_caps }))
+            Ok(json!({ "settings": settings, "hasKey": has_key, "keys": key_flags(app), "dataPath": app.data_dir.to_string_lossy(), "modelCaps": model_caps }))
         }
-        "capsCheck" => Ok(caps_info(app)),
         // How each file type reaches the current provider and model: as the original file, as text, or not at all.
         "fileSupport" => {
             let c = app.lock();

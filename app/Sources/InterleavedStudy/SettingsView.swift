@@ -10,6 +10,7 @@ struct SettingsView: View {
             NotificationSettings().tabItem { Label("Notifications", systemImage: "bell") }
             GeneralSettings().tabItem { Label("General", systemImage: "gearshape") }
         }
+        .buttonStyle(ActionButtonStyle(prominent: false, size: .small))
         .frame(width: 640)
         .frame(minHeight: 460, maxHeight: 820)
     }
@@ -35,6 +36,7 @@ private struct TextSetting: View {
             TextField(label, text: $text, prompt: Text(prompt))
                 .labelsHidden()
                 .multilineTextAlignment(.trailing)
+                .field(.small)
                 .frame(minWidth: 300)
                 .focused($focused)
         }
@@ -79,7 +81,7 @@ private struct SecretSetting: View {
     var body: some View {
         LabeledContent {
             HStack {
-                SecureField(label, text: $value, prompt: Text(saved ? "Paste a new one to replace it" : placeholder)).labelsHidden()
+                SecureField(label, text: $value, prompt: Text(saved ? "Paste a new one to replace it" : placeholder)).labelsHidden().field(.small)
                 Button("Save") {
                     let v = value
                     Task {
@@ -203,7 +205,7 @@ private struct AISettings: View {
             }
             LabeledContent("Model ID") {
                 HStack {
-                    TextField("Model ID", text: $model).labelsHidden().onSubmit { chooseModel(model, ai) }
+                    TextField("Model ID", text: $model).labelsHidden().field(.small).onSubmit { chooseModel(model, ai) }
                     Button { runTest(ai) } label: { if testing { ProgressView().controlSize(.small) } else { Text("Test Model") } }
                         .disabled(testing || model.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
@@ -424,7 +426,6 @@ private struct NotificationSettings: View {
 
 private struct GeneralSettings: View {
     @Environment(AppModel.self) private var app
-    @State private var caps: Caps?
 
     var body: some View {
         if let s = app.settings, let boot = app.boot {
@@ -440,20 +441,9 @@ private struct GeneralSettings: View {
                     HStack {
                         Button { app.perform { if let p: String = try await Engine.call("exportBackup") as String? { app.say("Backup saved to \(p)") } } } label: { Label("Export Backup…", systemImage: "square.and.arrow.up") }
                         Button { Task { await restore() } } label: { Label("Import Backup…", systemImage: "square.and.arrow.down") }
-                        Button { NSWorkspace.shared.open(URL(fileURLWithPath: boot.caps.dataPath)) } label: { Label("Open Data Folder", systemImage: "folder") }
+                        Button { NSWorkspace.shared.open(URL(fileURLWithPath: boot.dataPath)) } label: { Label("Open Data Folder", systemImage: "folder") }
                     }
                     Help("Backups contain everything except keys and tokens. Importing replaces all data and keeps your current keys and scheduled task setup; a safety copy of the current data is written to the data folder first.")
-                }
-                Section("Capability check") {
-                    Button("Run Check") { Task { caps = try? await Engine.call("capsCheck") } }
-                    if let caps {
-                        LabeledContent("Database", value: "SQLite loaded")
-                        LabeledContent("Keychain", value: caps.safeStorage ? "available" : "not available")
-                        LabeledContent("Notifications", value: caps.notifications ? "supported (permission is granted in System Settings)" : "not supported")
-                        LabeledContent("Menu bar timer", value: caps.tray ? "created" : "not created")
-                        LabeledContent("Dock badge and bounce", value: caps.dock ? "available" : "not available")
-                        LabeledContent("Data folder") { Text(caps.dataPath).textSelection(.enabled) }
-                    }
                 }
             }
             .formStyle(.grouped)

@@ -47,19 +47,13 @@ struct PlanView: View {
             HStack(spacing: 6) {
                 Text("Today’s goal")
                 NumberField(value: goal.value, range: 1...10_000) { setDay(DayGoal(kind: goal.kind, value: $0)) }
-                Picker("", selection: Binding(get: { goal.kind }, set: { setDay(DayGoal(kind: $0, value: goal.value)) })) {
-                    Text("minutes").tag("minutes"); Text("topics").tag("topics")
-                }
-                .labelsHidden().fixedSize()
-                if rec?.goal != nil { Button("Use Default") { setDay(nil) }.buttonStyle(.borderless) }
+                MenuChoice(selection: Binding(get: { goal.kind }, set: { setDay(DayGoal(kind: $0, value: goal.value)) }), options: [("minutes", "minutes"), ("topics", "topics")])
+                if rec?.goal != nil { Button("Use Default") { setDay(nil) }.buttonStyle(.quiet) }
             }
             HStack(spacing: 6) {
                 Text("Default goal")
                 NumberField(value: settings.goal.value, range: 1...10_000) { app.saveSettings(["goal": ["value": $0]]) }
-                Picker("", selection: Binding(get: { settings.goal.kind }, set: { app.saveSettings(["goal": ["kind": $0]]) })) {
-                    Text("minutes").tag("minutes"); Text("topics").tag("topics")
-                }
-                .labelsHidden().fixedSize()
+                MenuChoice(selection: Binding(get: { settings.goal.kind }, set: { app.saveSettings(["goal": ["kind": $0]]) }), options: [("minutes", "minutes"), ("topics", "topics")])
                 Text("rest days per week")
                 NumberField(value: settings.goal.restDaysPerWeek, range: 0...3, width: 40) { app.saveSettings(["goal": ["restDaysPerWeek": $0]]) }
             }
@@ -70,13 +64,14 @@ struct PlanView: View {
         let today = Days.key()
         let list = d.deadlines.filter { showPast || $0.date >= today }.sorted { $0.date < $1.date }
         return VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            HStack(spacing: 12) {
                 Text("Deadlines").font(Typeset.heading)
                 Spacer()
-                Button { form = .new(nil) } label: { Label("Add", systemImage: "plus") }
                 Button { Task { if let s: SheetData? = await app.act({ try await Engine.call("openSheet") }), let s { manual = false; sheet = s } } } label: {
                     Label("Import .xlsx or .csv", systemImage: "square.and.arrow.down")
                 }
+                .buttonStyle(.secondary)
+                Button { form = .new(nil) } label: { Label("Add", systemImage: "plus") }.buttonStyle(.secondary)
             }
             if list.isEmpty {
                 Text("No upcoming deadlines. Linked deadlines give their topics priority as the date approaches (from three weeks out).").foregroundStyle(Ink.ink2)
@@ -93,20 +88,20 @@ struct PlanView: View {
                                     if let l = link(dl) { Text("(\(l))").font(Typeset.small).foregroundStyle(Ink.ink2) }
                                 }
                                 Text(Days.countdown(dl.date)).font(Typeset.small.monospacedDigit()).foregroundStyle(n <= 7 && n >= 0 ? Ink.due : Ink.ink2)
-                                HStack(spacing: 2) {
+                                HStack(spacing: 8) {
                                     Button { form = .edit(dl) } label: { Image(systemName: "pencil") }.help("Edit")
                                     Button {
                                         app.confirmThen("Delete “\(dl.title)”?", detail: "The deadline is removed; topics are not affected.", ok: "Delete", danger: true) { try await Engine.run("deleteDeadline", dl.id) }
                                     } label: { Image(systemName: "trash") }.help("Delete")
                                 }
-                                .buttonStyle(.borderless)
+                                .buttonStyle(.quiet)
                             }
                         }
                     }
                 }
                 .frame(maxHeight: 260)
             }
-            Toggle("Show past deadlines", isOn: $showPast).font(Typeset.small)
+            Toggle("Show past deadlines", isOn: $showPast).font(Typeset.small).toggleStyle(.check)
         }
     }
 
@@ -196,7 +191,7 @@ private struct CalendarView: View {
             ForEach(list.prefix(shown)) { chip($0, past: k < today) }
             if list.count > shown {
                 Button("\(list.count - shown) more") { more = k }
-                    .buttonStyle(.borderless).font(Typeset.small)
+                    .buttonStyle(.quiet).font(Typeset.small)
                     .popover(isPresented: Binding(get: { more == k }, set: { if !$0 { more = nil } })) { dayCard(day, list) }
             }
             Spacer(minLength: 0)
@@ -237,7 +232,7 @@ private struct CalendarView: View {
                 if let m = studied[k], m >= 1 { Text("\(fmtMin(m)) studied").font(Typeset.small).foregroundStyle(Ink.ok) }
             }
             ForEach(list) { chip($0, past: k < Days.key()) }
-            Button { more = nil; onAdd(k) } label: { Label("Add Deadline", systemImage: "plus") }.buttonStyle(.borderless).font(Typeset.small)
+            Button { more = nil; onAdd(k) } label: { Label("Add Deadline", systemImage: "plus") }.buttonStyle(.quiet).font(Typeset.small)
         }
         .padding(12)
         .frame(width: 260)

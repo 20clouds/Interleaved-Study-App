@@ -6,6 +6,7 @@ import SwiftUI
 struct RootView: View {
     @Environment(AppModel.self) private var app
     @State private var dropping = false
+    @State private var toolbarHeight: CGFloat = 0
 
     var body: some View {
         @Bindable var app = app
@@ -16,7 +17,18 @@ struct RootView: View {
             detail
                 .navigationTitle(app.screen.title)
                 .toolbar { ToolbarItem(placement: .primaryAction) { Ribbon() } }
+                // The page's paper runs up under the toolbar, so the sidebar's edge is one straight line to the top.
+                .toolbarBackground(.hidden, for: .windowToolbar)
                 .safeAreaInset(edge: .top, spacing: 0) { RateLimitBanner() }
+                .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { toolbarHeight = $0 }
+        }
+        // The Library's details pane hangs on the window, not the page, so the toolbar splits at the pane's edge and
+        // the page's toolbar items stay left of it. Only a list's own show/hide is kept as the preference.
+        .inspector(isPresented: Binding(get: { app.libraryListing && app.library.inspector }, set: { if app.libraryListing { app.library.inspector = $0 } })) {
+            InspectorView(toolbarHeight: toolbarHeight)
+                .inspectorColumnWidth(min: 300, ideal: 360, max: 520)
+                // The page's paper, up under the toolbar too; it must not take the toolbar's clicks.
+                .background(Ink.paper.ignoresSafeArea().allowsHitTesting(false))
         }
         .overlay(alignment: .bottom) { ToastView() }
         .overlay { if dropping { DropTarget() } }
@@ -34,7 +46,7 @@ struct RootView: View {
     @ViewBuilder private var detail: some View {
         if let err = app.dataError, app.data == nil {
             EmptyState(title: "The data could not be loaded", message: err) {
-                Button("Try Again") { Task { await app.reload() } }
+                Button("Try Again") { Task { await app.reload() } }.buttonStyle(.secondary)
             }
         } else if app.data == nil || app.settings == nil {
             ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity).background(Ink.paper)
@@ -99,7 +111,7 @@ private struct Sidebar: View {
             }
         }
         .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom, spacing: 0) { SidebarFoot() }
+        .safeAreaInset(edge: .bottom, spacing: 0) { SidebarFoot(selection: selection) }
     }
 
     private var selection: Binding<SidebarItem?> {
@@ -141,45 +153,45 @@ private struct Sidebar: View {
     }
 }
 
-/// What the AI is doing right now, and Settings.
+/// What the AI is doing right now, and Settings: a second sidebar list pinned to the bottom, so its rows have the
+/// same insets, icons and selection as the ones above.
 private struct SidebarFoot: View {
     @Environment(AppModel.self) private var app
+    let selection: Binding<SidebarItem?>
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Divider().padding(.bottom, 6)
-            HStack(spacing: 6) {
-                Button { app.screen = .queue } label: {
-                    HStack(spacing: 8) {
-                        if let q = app.queue, q.running != nil, !q.userPaused { ProgressView().controlSize(.mini).frame(width: 16) }
-                        else { Image(systemName: Screen.queue.symbol).frame(width: 16) }
+        VStack(spacing: 0) {
+            Divider().padding(.horizontal, 10)
+            List(selection: selection) {
+                HStack(spacing: 6) {
+                    Label {
                         VStack(alignment: .leading, spacing: 0) {
                             Text("AI Queue")
                             if let state { Text(state).font(Typeset.small).foregroundStyle(warn ? Ink.due : Ink.ink2) }
                         }
-                        Spacer()
-                        if state == nil, let q = app.queue, q.queued + q.failed.count > 0 { Text("\(q.queued + q.failed.count)").font(Typeset.small.monospacedDigit()).foregroundStyle(Ink.ink3) }
+                    } icon: {
+                        if let q = app.queue, q.running != nil, !q.userPaused { ProgressView().controlSize(.mini) }
+                        else { Image(systemName: Screen.queue.symbol) }
                     }
-                    .contentShape(Rectangle())
+                    Spacer()
+                    if app.queue?.busy == true {
+                        Button { app.perform("AI requests cancelled") { try await Engine.run("cancelAi") } } label: { Image(systemName: "xmark") }
+                            .buttonStyle(.quiet)
+                            .help("Cancel all AI requests")
+                    } else if let q = app.queue, q.queued + q.failed.count > 0 {
+                        Text("\(q.queued + q.failed.count)").font(Typeset.small.monospacedDigit()).foregroundStyle(Ink.ink3)
+                    }
                 }
-                .buttonStyle(.plain)
+                .tag(SidebarItem.screen(.queue))
                 .help("AI Queue (⌘6)")
-                if app.queue?.busy == true {
-                    Button { app.perform("AI requests cancelled") { try await Engine.run("cancelAi") } } label: { Image(systemName: "xmark") }
-                        .buttonStyle(.borderless)
-                        .help("Cancel all AI requests")
-                }
+                SettingsLink { Label("Settings", systemImage: "slider.horizontal.3") }
+                    .buttonStyle(.plain)
+                    .help("Settings (⌘,)")
             }
-            .padding(.horizontal, 10).padding(.vertical, 4)
-            .background(RoundedRectangle(cornerRadius: 6).fill(app.screen == .queue ? Ink.sel : .clear))
-            SettingsLink {
-                Label("Settings", systemImage: "slider.horizontal.3").frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 10).padding(.vertical, 4)
-            .help("Settings (⌘,)")
+            .listStyle(.sidebar)
+            .scrollDisabled(true)
+            .frame(height: state == nil ? 76 : 92)
         }
-        .padding(.horizontal, 8).padding(.bottom, 10)
     }
 
     private var warn: Bool { app.queue?.rateLimit != nil || !(app.queue?.failed.isEmpty ?? true) }
@@ -238,7 +250,7 @@ struct Ribbon: View {
                         }
                         .frame(maxWidth: 220)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.quiet)
                     .help("Open the session")
                 }
                 if let p = s.proposal, s.phase != "work" {
@@ -250,7 +262,7 @@ struct Ribbon: View {
                         }
                         .frame(maxWidth: 200)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.quiet)
                     .help(p.reason)
                 }
             }

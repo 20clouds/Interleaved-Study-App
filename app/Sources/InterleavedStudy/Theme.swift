@@ -78,7 +78,7 @@ enum Typeset {
     static let clock = Font.system(size: 88, weight: .ultraLight).monospacedDigit()
     static let display = Font.system(size: 30, weight: .medium, design: .serif)
     static let title = Font.system(size: 20, weight: .semibold)
-    static let heading = Font.system(size: 13, weight: .semibold)
+    static let heading = Font.system(size: 13, weight: .medium)
     static let topic = Font.system(size: 14, design: .serif)
     static let body = Font.system(size: 13)
     static let small = Font.system(size: 12)
@@ -93,7 +93,7 @@ extension Animation {
 
 // MARK: - Small shared pieces
 
-/// A section heading: semibold 13pt with an optional action on the right.
+/// A section heading: medium 13pt with an optional action on the right.
 struct SectionHead<Trailing: View>: View {
     let title: String
     @ViewBuilder var trailing: Trailing
@@ -220,30 +220,242 @@ struct EmptyState<Actions: View>: View {
     }
 }
 
-/// The ink-filled primary button of DESIGN.md: 36pt tall on Today and in a session.
-struct PrimaryButtonStyle: ButtonStyle {
-    var big = false
-    @Environment(\.isEnabled) private var enabled
+/// The one size table for every control with text in it (buttons, fields, menus), so text sits at the same height
+/// in all of them: small 22pt (inspector, Settings), regular 28pt (pages and sheets), large 36pt (Today and a session).
+struct ControlMetrics {
+    let height: CGFloat, pad: CGFloat, font: CGFloat
+    init(_ size: ControlSize) {
+        switch size {
+        case .mini, .small: (height, pad, font) = (22, 8, 12)
+        case .large, .extraLarge: (height, pad, font) = (36, 16, 13)
+        default: (height, pad, font) = (28, 12, 13)
+        }
+    }
+    /// Top and bottom inset that centres one line of the control's font in its height; extra lines grow the box.
+    var inset: CGFloat { (height - NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: font))) / 2 }
+}
+
+/// A button's icon and title, centred on each other: a tall symbol cannot push the title off the button's middle.
+private struct ControlLabel: LabelStyle {
+    let font: CGFloat
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .lineLimit(1)
-            .fixedSize()
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(Ink.paper)
-            .padding(.horizontal, big ? 16 : 10)
-            .frame(minHeight: big ? 36 : 28)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Ink.ink.opacity(configuration.isPressed ? 0.8 : 1)))
-            .opacity(enabled ? 1 : 0.4)
-            .contentShape(Rectangle())
+        HStack(spacing: 6) {
+            configuration.icon.frame(height: font)
+            configuration.title
+        }
     }
 }
 
-extension ButtonStyle where Self == PrimaryButtonStyle {
-    static var primary: PrimaryButtonStyle { .init() }
-    static var primaryBig: PrimaryButtonStyle { .init(big: true) }
+/// The app's buttons, all one shape: ink-filled primary, outlined secondary, sized by `ControlMetrics`.
+struct ActionButtonStyle: ButtonStyle {
+    var prominent: Bool
+    /// A fixed size, for forms whose other controls stay regular (Settings).
+    var size: ControlSize?
+    func makeBody(configuration: Configuration) -> some View { Face(configuration: configuration, prominent: prominent, fixed: size) }
+
+    private struct Face: View {
+        let configuration: Configuration
+        let prominent: Bool
+        let fixed: ControlSize?
+        @Environment(\.isEnabled) private var enabled
+        @Environment(\.controlSize) private var size
+        @State private var hover = false
+
+        private var destructive: Bool { configuration.role == .destructive }
+        private var fill: Color { prominent ? (destructive ? Ink.due : Ink.ink) : configuration.isPressed ? Ink.sel : hover ? Ink.hover : Ink.raised }
+
+        var body: some View {
+            let m = ControlMetrics(fixed ?? size), shape = RoundedRectangle(cornerRadius: 6)
+            configuration.label
+                .labelStyle(ControlLabel(font: m.font))
+                .lineLimit(1)
+                .fixedSize()
+                .font(.system(size: m.font, weight: prominent ? .medium : .regular))
+                .foregroundStyle(prominent ? Ink.paper : destructive ? Ink.due : Ink.ink)
+                .padding(.horizontal, m.pad)
+                .frame(minHeight: m.height)
+                .background(shape.fill(fill.opacity(prominent && configuration.isPressed ? 0.8 : 1)))
+                .overlay { if !prominent { shape.strokeBorder(Ink.line2, lineWidth: 1) } }
+                .opacity(enabled ? 1 : 0.4)
+                .contentShape(shape)
+                .onHover { hover = $0 }
+                .animation(.quick, value: hover)
+        }
+    }
 }
 
-/// A text action in ink-2 that darkens on hover, in place of a blue link.
+extension ButtonStyle where Self == ActionButtonStyle {
+    static var primary: ActionButtonStyle { .init(prominent: true) }
+    static var secondary: ActionButtonStyle { .init(prominent: false) }
+}
+
+/// A text field in the buttons' shape and size, so a field and the button beside it line up. Apply it to a field
+/// with its label hidden; `size` fixes the size where other controls stay regular (Settings).
+struct FieldChrome: ViewModifier {
+    var size: ControlSize?
+    @Environment(\.controlSize) private var envSize
+    @Environment(\.isEnabled) private var enabled
+    @FocusState private var focused: Bool
+
+    func body(content: Content) -> some View {
+        let m = ControlMetrics(size ?? envSize), shape = RoundedRectangle(cornerRadius: 6)
+        content
+            .textFieldStyle(.plain)
+            .font(.system(size: m.font))
+            .focused($focused)
+            .padding(.horizontal, m.pad - 2)
+            .padding(.vertical, m.inset)
+            .frame(minHeight: m.height)
+            .background(shape.fill(Ink.raised))
+            .overlay { shape.strokeBorder(focused ? Ink.ink3 : Ink.line2, lineWidth: focused ? 1.5 : 1) }
+            .opacity(enabled ? 1 : 0.5)
+            .animation(.quick, value: focused)
+    }
+}
+
+extension View {
+    func field(_ size: ControlSize? = nil) -> some View { modifier(FieldChrome(size: size)) }
+}
+
+/// A short inline choice (a unit, a goal kind) as a secondary button with a menu, so it matches the field and buttons
+/// in its row; a system pop-up has its own height.
+struct MenuChoice<Value: Hashable>: View {
+    @Binding var selection: Value
+    let options: [(label: String, value: Value)]
+    var body: some View {
+        Menu {
+            ForEach(options, id: \.value) { o in
+                Button { selection = o.value } label: { if o.value == selection { Label(o.label, systemImage: "checkmark") } else { Text(o.label) } }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(options.first { $0.value == selection }?.label ?? "")
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(Ink.ink3)
+            }
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .buttonStyle(.secondary)
+        .fixedSize()
+    }
+}
+
+/// A date as a secondary button that opens a calendar, so it lines up with the buttons beside it.
+struct DateField: View {
+    @Binding var date: Date
+    @State private var open = false
+    var body: some View {
+        Button { open = true } label: {
+            HStack(spacing: 6) {
+                Text(date.formatted(.dateTime.month(.abbreviated).day().year())).monospacedDigit()
+                Image(systemName: "calendar").foregroundStyle(Ink.ink3)
+            }
+        }
+        .buttonStyle(.secondary)
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            DatePicker("Date", selection: $date, displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+                .controlSize(.regular)
+                .padding(12)
+        }
+    }
+}
+
+/// A checkbox drawn flat: a hairline square that fills with ink when on, in place of the system's bevelled box.
+struct FlatCheck: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button { configuration.isOn.toggle() } label: {
+            HStack(spacing: 8) {
+                Mark(on: configuration.isOn, round: false)
+                configuration.label
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(configuration.isOn ? "on" : "off")
+    }
+}
+
+extension ToggleStyle where Self == FlatCheck {
+    static var check: FlatCheck { .init() }
+}
+
+/// The flat mark of a checkbox (square, a tick) or a radio choice (round, a dot).
+private struct Mark: View {
+    let on: Bool
+    let round: Bool
+    @Environment(\.isEnabled) private var enabled
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: round ? 7 : 3.5)
+        ZStack {
+            shape.fill(on ? Ink.ink : Ink.raised)
+            if !on { shape.strokeBorder(Ink.line2, lineWidth: 1) }
+            if on {
+                if round { Circle().fill(Ink.paper).frame(width: 5, height: 5) }
+                else { Image(systemName: "checkmark").font(.system(size: 8, weight: .bold)).foregroundStyle(Ink.paper) }
+            }
+        }
+        .frame(width: 14, height: 14)
+        .opacity(enabled ? 1 : 0.5)
+        .animation(.quick, value: on)
+    }
+}
+
+/// A two-or-three-way switch drawn flat: hairline track, the chosen part raised paper with a hairline, no shadow.
+struct Segments<Value: Hashable>: View {
+    @Binding var selection: Value
+    let options: [(label: String, value: Value)]
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options, id: \.value) { o in
+                let on = o.value == selection
+                Button { selection = o.value } label: {
+                    Text(o.label)
+                        .font(.system(size: 13))
+                        .foregroundStyle(on ? Ink.ink : Ink.ink2)
+                        .frame(maxWidth: .infinity, minHeight: 24)
+                        .background {
+                            if on { RoundedRectangle(cornerRadius: 5).fill(Ink.raised).overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Ink.line2, lineWidth: 1)) }
+                        }
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Ink.hover))
+        .animation(.quick, value: selection)
+    }
+}
+
+/// A list of single choices with flat round marks, in place of the system's bevelled radio group.
+struct ChoiceList<Value: Hashable, Row: View>: View {
+    @Binding var selection: Value?
+    let values: [Value]
+    var spacing: CGFloat = 8
+    var isDisabled: (Value) -> Bool = { _ in false }
+    @ViewBuilder let row: (Value) -> Row
+    var body: some View {
+        VStack(alignment: .leading, spacing: spacing) {
+            ForEach(values, id: \.self) { v in
+                Button { selection = v } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Mark(on: selection == v, round: true).alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+                        row(v).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isDisabled(v))
+                .accessibilityAddTraits(selection == v ? .isSelected : [])
+            }
+        }
+    }
+}
+
+/// The third tier: a text or icon action in ink-2 that darkens on hover, in place of a blue link or a borderless button.
 struct QuietLink: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View { Hovering(configuration: configuration) }
     private struct Hovering: View {
@@ -251,9 +463,14 @@ struct QuietLink: ButtonStyle {
         @State private var hover = false
         var body: some View {
             configuration.label
-                .foregroundStyle(hover || configuration.isPressed ? Ink.ink : Ink.ink2)
+                .foregroundStyle(configuration.role == .destructive ? Ink.due : hover || configuration.isPressed ? Ink.ink : Ink.ink2)
                 .underline(hover)
+                .contentShape(Rectangle())
                 .onHover { hover = $0 }
         }
     }
+}
+
+extension ButtonStyle where Self == QuietLink {
+    static var quiet: QuietLink { .init() }
 }

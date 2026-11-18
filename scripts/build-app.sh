@@ -27,6 +27,8 @@ cp "$bin" "$out/Contents/MacOS/Interleaved Study"
 cp app/Resources/AppIcon.icns app/Resources/trayTemplate.png app/Resources/trayTemplate@2x.png "$out/Contents/Resources/"
 # The accent colour (a warm grey: chrome holds no hue) for sidebar selection, focus and switches.
 xcrun actool app/Resources/Assets.xcassets --compile "$out/Contents/Resources" --platform macosx --minimum-deployment-target 14.0 >/dev/null
-sed "s/__VERSION__/$version/g" app/Resources/Info.plist > "$out/Contents/Info.plist"
+# A debug build gets its own bundle id, so it can run beside the installed app and be told apart from it.
+id=local.interleaved.study.rs; [[ $config == debug ]] && id=$id.dev
+sed -e "s/__VERSION__/$version/g" -e "s/>local\.interleaved\.study\.rs</>$id</" app/Resources/Info.plist > "$out/Contents/Info.plist"
 codesign --force --sign - "$out"
 echo "Built $out"

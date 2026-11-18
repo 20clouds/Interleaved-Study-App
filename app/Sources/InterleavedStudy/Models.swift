@@ -269,14 +269,6 @@ struct Estimate: Codable {
     var tokens: Double
 }
 
-struct Caps: Codable {
-    var safeStorage: Bool
-    var notifications: Bool
-    var tray: Bool
-    var dock: Bool
-    var dataPath: String
-}
-
 struct ModelCaps: Codable {
     var api: String
     var system: Bool?
@@ -341,7 +333,7 @@ struct Bootstrap: Codable {
     var settings: Settings
     var hasKey: Bool
     var keys: [String: Bool]
-    var caps: Caps
+    var dataPath: String
     var modelCaps: [String: ModelCaps]
 }
 

@@ -74,7 +74,7 @@ tabular figures for the clock.
 | Clock | SF Pro (`--sans`) | 88px | 200 | 1 | −0.03em |
 | Display (Today headline, session topic) | New York (`--serif`) | 30px | 500 | 1.12 | −0.01em |
 | Title (view title, course title) | SF Pro | 20px | 600 | 1.2 | −0.015em |
-| Heading (section) | SF Pro | 13px | 600 | 1.3 | 0 |
+| Heading (section) | SF Pro | 13px | 500 | 1.3 | 0 |
 | Topic (lists) | New York | 14px | 400 | 1.35 | 0 |
 | Body | SF Pro | 13px | 400 | 1.45 | 0 |
 | Small / meta | SF Pro | 12px | 400 | 1.35 | 0 |
@@ -86,7 +86,25 @@ No uppercase tracked labels. Hierarchy comes from ink-2 before size or weight. A
 - **Spacing scale:** 4, 8, 12, 16, 24, 32, 48, 64. Inside a group 8, between groups 24, between page bands 32–48.
 - **Containers:** pages max 1120px wide with 32px gutters; reading columns ≤ 68ch.
 - **Controls:** 28px tall (Mac), primary actions on Today and in a session 36px.
-- **Radius set:** 6 controls · 8 cards and fields · 12 dialogs · 999 for the clock's pause button only.
+- **Buttons:** three tiers, one shape (`ActionButtonStyle` in `Theme.swift`): `.primary` ink fill, `.secondary`
+  raised paper with a line-2 border, `.quiet` ink-2 text or icon. Size follows `controlSize`: small 22 (inspector folds,
+  Settings, table rows), regular 28 (pages, sheets), large 36 (Today, a session). Buttons in one row share a size and
+  sit 12 apart (8 at small). Sheet footers are secondary unless marked primary. Menus, alerts and the toolbar stay
+  system.
+- **Fields beside buttons:** text fields (`.field()`), short inline choices (`MenuChoice`) and the inspector's date
+  (`DateField`) take the buttons' heights and padding from one table (`ControlMetrics` in `Theme.swift`), so text sits
+  at the same height in every control of a row. Labelled `Form` rows in sheets stay system. A date is a secondary
+  button that opens a calendar (`DateField`).
+- **Flat marks:** checkboxes (`.toggleStyle(.check)`), single-choice lists (`ChoiceList`) and two-way switches
+  (`Segments`) are drawn flat with hairlines, never the system's bevelled, shadowed controls. Short choices such as the
+  Study pool are a `MenuChoice` dropdown with their help line beside them.
+- **Weight:** hierarchy comes from colour before weight. Headings are medium 13, secondary buttons regular, and only
+  the ink-filled primary button is medium.
+- **Toolbar:** no toolbar background, so the sidebar runs to the top. The Library's details pane hangs on the window
+  (`RootView`), not the page, so the toolbar splits at its edge and no page item sits across it; the pane is paper
+  like the page. Its scroll view ignores the top safe area and pads by the toolbar's height: any scroll inset there
+  (safe area or `contentMargins`) is drawn lower than where it takes clicks.
+- **Radius set:** 6 controls and single-line fields · 8 cards · 12 dialogs · 999 for the clock's pause button only.
 - **Elevation:** hairlines everywhere; a shadow only on what floats (popover, menu, dialog, toast):
   `0 1px 2px rgba(20,18,14,.06), 0 12px 32px -8px rgba(20,18,14,.22)`. Never border + shadow + tint together.
 
@@ -112,8 +130,9 @@ No uppercase tracked labels. Hierarchy comes from ink-2 before size or weight. A
 
 ## Learned rules (from user corrections)
 - 2026-11-17: No system blue and no glowing buttons. The app's accent colour is a warm grey (`app/Resources/Assets.xcassets`),
-  default buttons in sheets use the ink primary style, and text actions are quiet ink-2 (`QuietLink`), never blue links.
+  default buttons in sheets use the ink primary style, and text actions are quiet ink-2 (`.quiet`), never blue links.
 - 2026-11-17: Nothing that cannot be clicked may look clickable, and every button must look like one (bordered, or an
   icon with its label). Check this visually, in the running app, not only in code.
 - 2026-11-17: Keep panes simple. The topic details pane shows the essentials; longer material (source text, schedule
   and overrides, history) sits in sections that open on request.
+- 2026-11-17: Buttons are visually consistent: same height, padding, radius and spacing across the app (see Buttons).

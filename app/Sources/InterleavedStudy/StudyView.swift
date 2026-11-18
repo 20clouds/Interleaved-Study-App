@@ -50,7 +50,7 @@ private struct StartPanel: View {
         if let d = app.data, let settings = app.settings {
             if d.topics.isEmpty {
                 EmptyState(title: "No topics to study yet", message: "Import lessons in the Library first.") {
-                    Button("Open the Library") { app.screen = .library }
+                    Button("Open the Library") { app.screen = .library }.buttonStyle(.secondary)
                 }
             } else {
                 Page {
@@ -65,7 +65,7 @@ private struct StartPanel: View {
                             timerSection(settings)
                             HStack(spacing: 12) {
                                 Button { Task { await start() } } label: { HStack(spacing: 8) { Label("Start with the Top Suggestion", systemImage: "play.fill"); KeyHint(key: "S") } }
-                                    .buttonStyle(.primaryBig)
+                                    .buttonStyle(.primary).controlSize(.large)
                                     .disabled(pool == nil || (preview ?? []).isEmpty)
                                 Text(pool == nil ? "Choose what goes in the pool" : label).font(Typeset.small).foregroundStyle(Ink.ink2)
                             }
@@ -142,18 +142,11 @@ private struct StartPanel: View {
     private func poolSection(_ d: DataSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Pool").font(Typeset.heading)
-            Picker("Pool", selection: $kind) {
-                ForEach(PoolKind.allCases) { k in
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(k.label)
-                        Text(k.help).font(Typeset.small).foregroundStyle(Ink.ink2)
-                    }
-                    .tag(k)
-                }
+            HStack(spacing: 8) {
+                MenuChoice(selection: $kind, options: PoolKind.allCases.map { ($0.label, $0) })
+                    .onChange(of: kind) { if kind == .unit && !units.contains(unit) { unit = units.first ?? "" } }
+                Text(kind.help).font(Typeset.small).foregroundStyle(Ink.ink2)
             }
-            .pickerStyle(.radioGroup)
-            .labelsHidden()
-            .onChange(of: kind) { if kind == .unit && !units.contains(unit) { unit = units.first ?? "" } }
 
             switch kind {
             case .course:
@@ -162,6 +155,7 @@ private struct StartPanel: View {
                         Toggle(isOn: Binding(get: { courseIds.contains(c.id) }, set: { on in if on { courseIds.insert(c.id) } else { courseIds.remove(c.id) } })) {
                             HStack(spacing: 6) { Dot(color: app.color(c.id)); Text(c.name) }
                         }
+                        .toggleStyle(.check)
                     }
                 }
             case .lesson, .unit:
@@ -193,13 +187,8 @@ private struct StartPanel: View {
         @Bindable var app = app
         return VStack(alignment: .leading, spacing: 12) {
             Text("Timer").font(Typeset.heading)
-            Picker("Mode", selection: $app.mode) {
-                Text("Timed topics").tag("timed")
-                Text("Interleaved Pomodoro").tag("pomodoro")
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: 360)
+            Segments(selection: $app.mode, options: [("Timed topics", "timed"), ("Interleaved Pomodoro", "pomodoro")])
+                .frame(maxWidth: 360)
             if app.mode == "timed" {
                 HStack(spacing: 6) {
                     Text("Each topic gets")
@@ -207,6 +196,7 @@ private struct StartPanel: View {
                     Text("minutes.")
                 }
                 Toggle("Use each topic’s suggested time instead", isOn: Binding(get: { s.study.useSuggested }, set: { app.saveSettings(["study": ["useSuggested": $0]]) }))
+                    .toggleStyle(.check)
             } else {
                 PomodoroFields(pomo: s.pomo)
             }
@@ -232,13 +222,8 @@ struct PomodoroFields: View {
                 Text("blocks.")
             }
             HStack(spacing: 6) {
-                Picker("Topic length", selection: Binding(get: { pomo.perTopic }, set: { save("perTopic", $0) })) {
-                    Text("1 Pomodoro per topic").tag("one")
-                    Text("N Pomodoros per topic").tag("n")
-                    Text("Custom minutes per topic").tag("minutes")
-                }
-                .labelsHidden()
-                .fixedSize()
+                MenuChoice(selection: Binding(get: { pomo.perTopic }, set: { save("perTopic", $0) }),
+                           options: [("1 Pomodoro per topic", "one"), ("N Pomodoros per topic", "n"), ("Custom minutes per topic", "minutes")])
                 if pomo.perTopic == "n" { NumberField(value: pomo.n, range: 1...20) { save("n", $0) } }
                 if pomo.perTopic == "minutes" { NumberField(value: pomo.minutes, range: 1...600) { save("minutes", $0) }; Text("min per topic") }
             }
@@ -257,9 +242,9 @@ struct NumberField: View {
 
     var body: some View {
         TextField("", text: $text)
-            .textFieldStyle(.roundedBorder)
             .multilineTextAlignment(.trailing)
             .monospacedDigit()
+            .field()
             .frame(width: width)
             .focused($focused)
             .onAppear { text = Self.show(value) }
@@ -289,7 +274,7 @@ struct TopicPicker: View {
     var body: some View {
         let list = (app.data?.topics ?? []).filter { filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter) }.prefix(300)
         VStack(alignment: .leading, spacing: 6) {
-            TextField("Filter topics", text: $filter).textFieldStyle(.roundedBorder)
+            TextField("Filter topics", text: $filter).field()
             List(Array(list)) { t in
                 Toggle(isOn: Binding(get: { ids.contains(t.id) }, set: { on in
                     if !multiple { ids = on ? [t.id] : [] } else if on { ids.append(t.id) } else { ids.removeAll { $0 == t.id } }
@@ -299,7 +284,7 @@ struct TopicPicker: View {
                         DeckLabel(doc: app.docs[t.docId])
                     }
                 }
-                .toggleStyle(.checkbox)
+                .toggleStyle(.check)
             }
             .listStyle(.bordered)
             .frame(height: min(220, CGFloat(max(list.count, 1)) * 26 + 12))
@@ -387,9 +372,10 @@ private struct SessionStage: View {
             Text("\(s.sandboxReviews.count) block(s) recorded in this sandbox, \(fmtMin(s.sandboxReviews.reduce(0) { $0 + $1.minutes })) in total. They have not touched your schedule.")
                 .font(.system(size: 15)).foregroundStyle(Ink.ink2)
             HStack(spacing: 12) {
-                Button("Save to Schedule") { app.perform("Saved to schedule") { try await Engine.run("sessionSandbox", true) } }.buttonStyle(.primaryBig)
-                Button("Discard") { app.perform("Sandbox discarded") { try await Engine.run("sessionSandbox", false) } }.controlSize(.large)
+                Button("Save to Schedule") { app.perform("Saved to schedule") { try await Engine.run("sessionSandbox", true) } }.buttonStyle(.primary)
+                Button("Discard") { app.perform("Sandbox discarded") { try await Engine.run("sessionSandbox", false) } }.buttonStyle(.secondary)
             }
+            .controlSize(.large)
         }
     }
 
@@ -430,23 +416,24 @@ private struct SessionStage: View {
             }
             Text(s.paused ? "Paused" : s.phase == "work" ? (s.mode == "pomodoro" ? "Pomodoro \(s.blockIndex + 1) of \(s.blocksForTopic)" : "Timed block") : s.breakKind == "long" ? "Long break" : "Short break")
                 .foregroundStyle(Ink.ink2)
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Button { app.togglePause() } label: {
                     HStack(spacing: 8) { Label(s.paused ? "Resume" : "Pause", systemImage: s.paused ? "play.fill" : "pause.fill"); KeyHint(key: "space") }
                 }
-                .buttonStyle(.primaryBig)
+                .buttonStyle(.primary)
                 if s.phase == "work" {
-                    Button { app.perform { try await Engine.run("sessionEndEarly") } } label: { Label("Done, Rate Now", systemImage: "checkmark") }.controlSize(.large)
+                    Button { app.perform { try await Engine.run("sessionEndEarly") } } label: { Label("Done, Rate Now", systemImage: "checkmark") }.buttonStyle(.secondary)
                 }
-                Button { app.perform { try await Engine.run("sessionExtend", 5) } } label: { Label("5 min", systemImage: "plus") }.buttonStyle(.borderless)
+                Button { app.perform { try await Engine.run("sessionExtend", 5) } } label: { Label("5 Min", systemImage: "plus") }.buttonStyle(.quiet)
                 if s.phase == "work" {
                     Button { app.perform { try await Engine.run("sessionSkip") } } label: { HStack(spacing: 6) { Label("Skip Topic", systemImage: "forward.end"); KeyHint(key: "N") } }
-                        .buttonStyle(.borderless).help("Records time spent only")
+                        .buttonStyle(.quiet).help("Records time spent only")
                 } else {
                     Button { app.perform { try await Engine.run("sessionSkipBreak") } } label: { HStack(spacing: 6) { Label("Skip Break", systemImage: "forward.end"); KeyHint(key: "N") } }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.quiet)
                 }
             }
+            .controlSize(.large)
         }
     }
 
@@ -474,7 +461,7 @@ private struct SessionStage: View {
             if let q = app.pending.quiz {
                 (Text("Quiz score ") + Text("\(Int((q * 100).rounded()))%").bold() + Text(", counts double")).font(Typeset.small)
             } else {
-                Button { quiz.toggle() } label: { Label("Quick Quiz", systemImage: "questionmark.circle") }
+                Button { quiz.toggle() } label: { Label("Quick Quiz", systemImage: "questionmark.circle") }.buttonStyle(.secondary)
             }
             if quiz, app.pending.quiz == nil, let id = s.topicId {
                 QuizPanel(topicId: id) { app.pending.quiz = $0; quiz = false }
@@ -485,14 +472,15 @@ private struct SessionStage: View {
             TextField("Optional note for this review", text: $app.pending.note, axis: .vertical)
                 .font(Typeset.serif(14))
                 .lineLimit(2...4)
-                .textFieldStyle(.roundedBorder)
-            HStack(spacing: 10) {
+                .field()
+            HStack(spacing: 12) {
                 Button { app.rate() } label: { HStack(spacing: 8) { Text("Save Rating"); KeyHint(key: "Return") } }
-                    .buttonStyle(.primaryBig).disabled(app.pending.rating == nil)
+                    .buttonStyle(.primary).disabled(app.pending.rating == nil)
                 Button("Skip Rating") { app.perform { try await Engine.run("sessionRate", ["rating": nil] as [String: Any?]) } }
-                    .controlSize(.large).help("Records the time without a rating")
-                Button { app.perform { try await Engine.run("sessionExtend", 5) } } label: { Label("Keep Going 5 More Min", systemImage: "plus") }
+                    .buttonStyle(.secondary).help("Records the time without a rating")
+                Button { app.perform { try await Engine.run("sessionExtend", 5) } } label: { Label("Keep Going 5 More Min", systemImage: "plus") }.buttonStyle(.quiet)
             }
+            .controlSize(.large)
         }
     }
 
@@ -509,16 +497,14 @@ private struct SessionStage: View {
                     DeckLabel(doc: app.topics[p.topicId].flatMap { app.docs[$0.docId] })
                     Text(p.reason).font(Typeset.small).foregroundStyle(Ink.ink2)
                 }
-                HStack(spacing: 10) {
+                HStack(spacing: 12) {
                     let label = HStack(spacing: 8) { Label(s.phase == "break" ? "Start It Now" : "Start", systemImage: "play.fill"); KeyHint(key: "Return") }
-                    if s.phase == "break" {
-                        Button { app.perform { try await Engine.run("sessionAccept", p.topicId) } } label: { label }.controlSize(.large)
-                    } else {
-                        Button { app.perform { try await Engine.run("sessionAccept", p.topicId) } } label: { label }.buttonStyle(.primaryBig)
-                    }
+                    Button { app.perform { try await Engine.run("sessionAccept", p.topicId) } } label: { label }
+                        .buttonStyle(ActionButtonStyle(prominent: s.phase != "break"))
                     Button { app.perform { try await Engine.run("sessionSkipSuggestion") } } label: { HStack(spacing: 6) { Label("Something Else", systemImage: "forward.end"); KeyHint(key: "X") } }
-                        .buttonStyle(.borderless).help("Suggest a different topic instead")
+                        .buttonStyle(.quiet).help("Suggest a different topic instead")
                 }
+                .controlSize(.large)
                 .padding(.top, 4)
             } else {
                 Text("Nothing left to suggest in this pool. Pick a topic on the right or end the session.").foregroundStyle(Ink.ink2)
@@ -572,8 +558,7 @@ private struct SessionStage: View {
             }
             if s.phase != "done" {
                 Button(role: .destructive) { app.endSession() } label: { Label("End Session", systemImage: "stop.fill") }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(Ink.due)
+                    .buttonStyle(.quiet)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

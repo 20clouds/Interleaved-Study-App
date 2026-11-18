@@ -12,7 +12,7 @@ struct TodayView: View {
             if d.courses.isEmpty {
                 EmptyState(title: "Start with a course", message: "A course holds the lecture files for one subject. Each file becomes a lesson, the AI splits it into topics, and this page then shows what to study and in which order. You can also drop lecture files anywhere in this window.") {
                     Button { app.screen = .library; app.courseWizard = [] } label: { Label("New Course", systemImage: "folder.badge.plus") }
-                        .buttonStyle(.primaryBig)
+                        .buttonStyle(.primary).controlSize(.large)
                 }
             } else {
                 page(d, settings)
@@ -69,18 +69,20 @@ struct TodayView: View {
                     lede(s, ctx.date)
                 }
                 HStack(spacing: 12) {
-                    Button { app.screen = .session } label: { Label("Back to the Session", systemImage: "timer") }.buttonStyle(.primaryBig)
+                    Button { app.screen = .session } label: { Label("Back to the Session", systemImage: "timer") }.buttonStyle(.primary)
                     if s.phase == "work" || s.phase == "rate", let t = s.topicId.flatMap({ app.topics[$0] }) { DeckLabel(doc: app.docs[t.docId]) }
                 }
+                .controlSize(.large)
                 .padding(.top, 6)
             } else {
                 Text(headline).font(Typeset.display)
                 Text(sub).font(.system(size: 15)).foregroundStyle(Ink.ink2)
                 HStack(spacing: 12) {
                     Button { Task { await app.startSession() } } label: { HStack(spacing: 8) { Label("Start Studying", systemImage: "play.fill"); KeyHint(key: "S") } }
-                        .buttonStyle(.primaryBig).disabled(!canStart)
-                    Button("Choose What to Study") { app.screen = .session }.controlSize(.large)
+                        .buttonStyle(.primary).disabled(!canStart)
+                    Button("Choose What to Study") { app.screen = .session }.buttonStyle(.secondary)
                 }
+                .controlSize(.large)
                 .padding(.top, 6)
             }
         }
@@ -134,7 +136,7 @@ struct TodayView: View {
         let done = goal.kind == "minutes" ? rec?.minutes ?? 0 : rec?.topics ?? 0
         let streak = Streak(Set(d.daily.filter { $0.minutes > 0 }.map(\.id)), today: today, restPerWeek: Int(settings.goal.restDaysPerWeek))
         return VStack(alignment: .leading, spacing: 8) {
-            SectionHead("Today’s goal") { Button("Change") { app.screen = .plan }.buttonStyle(QuietLink()) }
+            SectionHead("Today’s goal") { Button("Change") { app.screen = .plan }.buttonStyle(.quiet) }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(goal.kind == "minutes" ? fmtMin(done) : "\(Int(done))").font(.system(size: 22, weight: .semibold).monospacedDigit())
                 Text("of \(goal.kind == "minutes" ? fmtMin(goal.value) : plural(Int(goal.value), "topic"))").foregroundStyle(Ink.ink2)
@@ -149,7 +151,7 @@ struct TodayView: View {
         let today = Days.key()
         let list = d.deadlines.filter { $0.date >= today }.sorted { $0.date < $1.date }.prefix(5)
         return VStack(alignment: .leading, spacing: 8) {
-            SectionHead("Deadlines") { Button("Plan") { app.screen = .plan }.buttonStyle(QuietLink()) }
+            SectionHead("Deadlines") { Button("Plan") { app.screen = .plan }.buttonStyle(.quiet) }
             if list.isEmpty {
                 Text("None coming up. Linked deadlines give their topics priority from three weeks out.").font(Typeset.small).foregroundStyle(Ink.ink2)
             } else {
@@ -170,7 +172,7 @@ struct TodayView: View {
 
     private func courses(_ d: DataSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            SectionHead("Courses") { Button("Library") { app.scope = .all; app.screen = .library }.buttonStyle(QuietLink()) }
+            SectionHead("Courses") { Button("Library") { app.scope = .all; app.screen = .library }.buttonStyle(.quiet) }
                 .padding(.bottom, 4)
             ForEach(d.courses) { c in
                 let rows = d.topics.filter { $0.courseId == c.id }

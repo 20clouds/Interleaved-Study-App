@@ -49,7 +49,7 @@ struct QueueView: View {
         if !q.userPaused, let until = q.pausedUntil {
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 banner("\(q.pauseReason ?? "Waiting before trying again.") Next try in \(max(0, Int(((until - ctx.date.ms) / 1000).rounded(.up)))) s.", alert: true) {
-                    Button("Try Now") { app.perform { try await Engine.run("resumeQueue") } }
+                    Button("Try Now") { app.perform { try await Engine.run("resumeQueue") } }.buttonStyle(.secondary)
                 }
             }
         }
@@ -67,7 +67,7 @@ struct QueueView: View {
 
     private func progress(_ q: QueueStatus, _ routine: Bool) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
+            HStack(spacing: 12) {
                 Text("Progress").font(Typeset.heading)
                 Spacer()
                 if q.userPaused {
@@ -77,6 +77,7 @@ struct QueueView: View {
                 }
                 if q.queued > 0 { Button { app.perform("AI requests cancelled") { try await Engine.run("cancelAi") } } label: { Label("Cancel All", systemImage: "xmark") } }
             }
+            .buttonStyle(.secondary)
             HStack(spacing: 32) {
                 Stat(value: "\(q.docsDone)/\(q.docsTotal)", label: "lessons done")
                 Stat(value: "\(q.chunksDone)/\(q.chunksTotal)", label: "windows done")
@@ -86,14 +87,14 @@ struct QueueView: View {
                     ProgressView().controlSize(.small)
                     Text(running)
                     Spacer()
-                    if let id = q.runningId { Button("Cancel") { app.perform("Request cancelled") { try await Engine.run("cancelAi", ["jobId": id]) } }.controlSize(.small) }
+                    if let id = q.runningId { Button("Cancel") { app.perform("Request cancelled") { try await Engine.run("cancelAi", ["jobId": id]) } }.buttonStyle(.secondary) }
                 }
             }
             if let run = q.run {
                 HStack {
                     Text(runText(run))
                     Spacer()
-                    if let u = run.url.flatMap(URL.init(string:)) { Link(destination: u) { Label("Watch the Run", systemImage: "arrow.up.right.square") }.controlSize(.small) }
+                    if let u = run.url.flatMap(URL.init(string:)) { Link(destination: u) { Label("Watch the Run", systemImage: "arrow.up.right.square") }.buttonStyle(.quiet) }
                 }
             }
             Text((routine ? "Requests travel to your Claude scheduled task in runs, several at a time. Cancel" : "One request at a time, as fast as the provider allows. Cancel")
@@ -116,14 +117,14 @@ struct QueueView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Failed").font(Typeset.heading)
             ForEach(q.failed) { f in
-                HStack(alignment: .top) {
+                HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(f.label)
                         Text(f.error).font(Typeset.small).foregroundStyle(Ink.due).textSelection(.enabled)
                     }
                     Spacer()
-                    Button { app.perform { try await Engine.run("retryJob", f.id) } } label: { Label("Retry", systemImage: "arrow.clockwise") }
-                    Button("Discard") { app.perform { try await Engine.run("discardJob", f.id) } }.buttonStyle(.borderless)
+                    Button("Discard") { app.perform { try await Engine.run("discardJob", f.id) } }.buttonStyle(.quiet)
+                    Button { app.perform { try await Engine.run("retryJob", f.id) } } label: { Label("Retry", systemImage: "arrow.clockwise") }.buttonStyle(.secondary)
                 }
                 Divider()
             }
@@ -136,33 +137,40 @@ struct QueueView: View {
             if d.docs.isEmpty {
                 Text("No lessons imported yet.").foregroundStyle(Ink.ink2)
             } else {
-                Table(d.docs) {
-                    TableColumn("Lesson") { doc in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(doc.title).font(Typeset.serif(13))
-                            if let n = doc.importNote { Text(n).font(Typeset.small).foregroundStyle(Ink.ink2) }
-                        }
+                // A card sized to its rows, in place of a table: the list is short and lives inside the scrolling page.
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 0) {
+                    GridRow {
+                        Text("Lesson").frame(maxWidth: .infinity, alignment: .leading)
+                        Text("Status")
+                        Text("Words").gridColumnAlignment(.trailing)
+                        Text("Topics").gridColumnAlignment(.trailing)
                     }
-                    TableColumn("Status") { doc in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text((statusText[doc.status] ?? doc.status) + (doc.status == "queued" ? " \(doc.winsDone)/\(doc.windows)" : ""))
-                                .foregroundStyle(doc.status == "needs" || doc.status == "error" ? Ink.due : Ink.ink)
-                            if let e = doc.error { Text(e).font(Typeset.small).foregroundStyle(Ink.ink2).lineLimit(2).help(e) }
+                    .font(Typeset.small).foregroundStyle(Ink.ink2)
+                    .padding(.vertical, 8)
+                    ForEach(d.docs) { doc in
+                        Divider()
+                        GridRow(alignment: .firstTextBaseline) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(doc.title).font(Typeset.serif(13))
+                                if let n = doc.importNote { Text(n).font(Typeset.small).foregroundStyle(Ink.ink2) }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text((statusText[doc.status] ?? doc.status) + (doc.status == "queued" ? " \(doc.winsDone)/\(doc.windows)" : ""))
+                                    .foregroundStyle(doc.status == "needs" || doc.status == "error" ? Ink.due : Ink.ink)
+                                if let e = doc.error { Text(e).font(Typeset.small).foregroundStyle(Ink.ink2).lineLimit(2).frame(maxWidth: 260, alignment: .leading).help(e) }
+                                if doc.status == "needs" || doc.status == "error" {
+                                    Button { app.perform { try await Engine.run("retryDoc", doc.id) } } label: { Label("Retry", systemImage: "arrow.clockwise") }.buttonStyle(.secondary).controlSize(.small)
+                                }
+                            }
+                            Text(doc.words.formatted()).monospacedDigit()
+                            Text("\(d.topics.filter { $0.docId == doc.id }.count)").monospacedDigit()
                         }
+                        .padding(.vertical, 10)
                     }
-                    .width(min: 140, ideal: 200)
-                    TableColumn("Words") { Text($0.words.formatted()).monospacedDigit() }.width(70).alignment(.trailing)
-                    TableColumn("Topics") { doc in Text("\(d.topics.filter { $0.docId == doc.id }.count)").monospacedDigit() }.width(56).alignment(.trailing)
-                    TableColumn("") { doc in
-                        if doc.status == "needs" || doc.status == "error" {
-                            Button { app.perform { try await Engine.run("retryDoc", doc.id) } } label: { Label("Retry", systemImage: "arrow.clockwise") }.controlSize(.small)
-                        }
-                    }
-                    .width(80)
                 }
-                .alternatingRowBackgrounds(.disabled)
-                .frame(minHeight: CGFloat(min(d.docs.count, 14)) * 34 + 32)
-                .scrollDisabled(d.docs.count <= 14)
+                .padding(.horizontal, 16).padding(.bottom, 4)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Ink.panel))
             }
         }
     }

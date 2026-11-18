@@ -72,6 +72,8 @@ final class AppModel {
     var courseWizard: [String]?
     var importer = ImportFlow()
     var library = LibraryPrefs.load() { didSet { library.save() } }
+    /// The Library is showing a list of topics (not the course shelf), so it has a details pane.
+    var libraryListing = false
 
     var mode: String = UserDefaults.standard.string(forKey: "mode") ?? "timed" {
         didSet { UserDefaults.standard.set(mode, forKey: "mode") }
