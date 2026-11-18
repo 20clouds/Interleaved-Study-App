@@ -40,7 +40,7 @@ pub async fn pick(what: Pick) -> Vec<PathBuf> {
     let req = match what {
         Pick::Files => json!({ "op": "open", "title": "Choose lesson files", "types": crate::importer::PICK_EXT, "multiple": true }),
         Pick::Folders => json!({ "op": "open", "title": "Choose a folder of lessons", "folders": true, "multiple": true }),
-        Pick::Sheet => json!({ "op": "open", "title": "Import deadlines", "types": ["xlsx", "xls", "csv"] }),
+        Pick::Sheet => json!({ "op": "open", "title": "Import deadlines", "types": ["xlsx", "csv"] }),
         Pick::Backup => json!({ "op": "open", "title": "Import backup", "types": ["json"] }),
         Pick::SaveBackup(name) => json!({ "op": "save", "title": "Export backup", "name": name, "types": ["json"] }),
     };
