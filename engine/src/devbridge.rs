@@ -12,7 +12,22 @@ pub fn publish(ev: &str, payload: &Value) {
     if let Some(tx) = EVENTS.get() { let _ = tx.send(json!({ "event": ev, "payload": payload }).to_string()); }
 }
 
-const CORS: &str = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: content-type\r\nAccess-Control-Allow-Methods: POST, GET, OPTIONS\r\n";
+/// Only local tools such as curl or a Node script may use the bridge. A browser always sends `Origin` on a
+/// cross-site request, and a Host other than loopback means a DNS-rebinding page, so any web page the developer
+/// has open is refused instead of being able to read and change their study data.
+fn allowed(head: &str, port: u16) -> bool {
+    let mut host_ok = false;
+    for line in head.lines().skip(1) {
+        let Some((name, value)) = line.split_once(':') else { continue };
+        let name = name.trim().to_ascii_lowercase();
+        if name == "origin" { return false }
+        if name == "host" {
+            let v = value.trim();
+            host_ok = v == format!("127.0.0.1:{port}") || v == format!("localhost:{port}");
+        }
+    }
+    host_ok
+}
 
 pub fn start(app: AppRef) {
     let Some(port) = std::env::var("INTERLEAVED_STUDY_DEV_PORT").ok().and_then(|p| p.parse::<u16>().ok()) else { return };
@@ -35,11 +50,11 @@ pub fn start(app: AppRef) {
                 };
                 let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
                 let first = head.lines().next().unwrap_or("");
-                if first.starts_with("OPTIONS") {
-                    let _ = sock.write_all(format!("HTTP/1.1 204 No Content\r\n{CORS}Content-Length: 0\r\n\r\n").as_bytes()).await;
+                if !allowed(&head, port) {
+                    let _ = sock.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n").await;
                 } else if first.starts_with("GET /events") {
                     let Some(mut rx) = EVENTS.get().map(|t| t.subscribe()) else { return };
-                    if sock.write_all(format!("HTTP/1.1 200 OK\r\n{CORS}Content-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\n").as_bytes()).await.is_err() { return }
+                    if sock.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\n").as_bytes()).await.is_err() { return }
                     while let Ok(msg) = rx.recv().await {
                         if sock.write_all(format!("data: {msg}\n\n").as_bytes()).await.is_err() { return }
                     }
@@ -56,9 +71,23 @@ pub fn start(app: AppRef) {
                         Ok(v) => json!({ "ok": true, "value": v }),
                         Err(e) => json!({ "ok": false, "error": e }),
                     }.to_string();
-                    let _ = sock.write_all(format!("HTTP/1.1 200 OK\r\n{CORS}Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{out}", out.len()).as_bytes()).await;
+                    let _ = sock.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{out}", out.len()).as_bytes()).await;
                 }
             });
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::allowed;
+
+    #[test]
+    fn only_local_tools_get_in() {
+        assert!(allowed("POST /api HTTP/1.1\r\nHost: 127.0.0.1:5184\r\n\r\n", 5184));
+        assert!(allowed("GET /events HTTP/1.1\r\nhost: localhost:5184\r\n\r\n", 5184));
+        assert!(!allowed("POST /api HTTP/1.1\r\nHost: 127.0.0.1:5184\r\nOrigin: https://example.com\r\n\r\n", 5184));
+        assert!(!allowed("POST /api HTTP/1.1\r\nHost: evil.example:5184\r\n\r\n", 5184));
+        assert!(!allowed("POST /api HTTP/1.1\r\n\r\n", 5184));
+    }
 }

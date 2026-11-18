@@ -194,7 +194,8 @@ curl -s -X POST 127.0.0.1:5184/api -d '{"method":"queueStatus","args":[]}'
 ```
 
 `GET /events` on the same port streams what the engine emits (`queue`, `session`, `data`). The dev bridge is compiled
-out of release builds.
+out of release builds, and it refuses browsers (any request with an `Origin` header, or a Host other than
+`127.0.0.1` or `localhost` on that port), so a web page cannot reach it.
 
 ## Known limits
 
