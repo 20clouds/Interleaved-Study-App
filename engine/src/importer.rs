@@ -356,4 +356,48 @@ mod tests {
         assert_eq!((r2.added, r2.unchanged), (0, 1));
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// Builds a PDF from its objects with a correct cross-reference table.
+    fn pdf_of(objs: &[String]) -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let mut offsets = vec![];
+        for (i, o) in objs.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+        }
+        let xref = pdf.len();
+        pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+        for o in offsets { pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes()); }
+        pdf.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
+        pdf
+    }
+
+    #[test]
+    fn pdf_text_is_read() {
+        let content = "BT /F1 12 Tf 72 720 Td (Mitochondria make ATP) Tj ET";
+        let pdf = pdf_of(&[
+            "<< /Type /Catalog /Pages 2 0 R >>".into(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".into(),
+            format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
+        ]);
+        let (text, pages) = read_pdf(&pdf).unwrap();
+        assert_eq!(pages, 1);
+        assert!(text.contains("Mitochondria make ATP"), "{text:?}");
+    }
+
+    /// A PDF whose objects nest tens of thousands deep. lopdf before 0.42 recursed once per level and overflowed the
+    /// stack (RUSTSEC-2026-0187): an abort that `catch_unwind` cannot stop, so one hostile lesson closed the app.
+    #[test]
+    fn deeply_nested_pdf_does_not_crash() {
+        let depth = 200_000;
+        let pdf = pdf_of(&[
+            "<< /Type /Catalog /Pages 2 0 R >>".into(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+            format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /X {}{} >>", "[".repeat(depth), "]".repeat(depth)),
+        ]);
+        // Either outcome is fine; reaching this line at all is the test.
+        let _ = read_pdf(&pdf);
+    }
 }
