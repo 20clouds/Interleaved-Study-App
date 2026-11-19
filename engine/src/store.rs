@@ -7,6 +7,10 @@ use serde_json::{json, Map, Value};
 use std::cell::Cell;
 use std::path::Path;
 
+/// State about this Mac's scheduled-task mailbox (batches in flight, answers kept for later, recent fires). It acts
+/// on GitHub with this Mac's sign-in, so it is neither written into a backup nor taken from one.
+pub const MACHINE_KV: [&str; 3] = ["routinePending", "routineResults", "routineFires"];
+
 pub const COLLS: [&str; 10] = ["courses", "docs", "topics", "jobs", "deadlines", "daily", "snapshots", "quizzes", "cache", "wins"];
 
 fn parent_field(c: &str) -> Option<&'static str> {
@@ -178,7 +182,7 @@ impl Store {
         let mut kv = Map::new();
         if let Ok(mut st) = self.conn.prepare("SELECT k, v FROM kv") {
             if let Ok(rows) = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
-                for (k, v) in rows.flatten() { kv.insert(k, serde_json::from_str(&v).unwrap_or(Value::Null)); }
+                for (k, v) in rows.flatten().filter(|(k, _)| !MACHINE_KV.contains(&k.as_str())) { kv.insert(k, serde_json::from_str(&v).unwrap_or(Value::Null)); }
             }
         }
         json!({ "app": "interleaved-study", "version": 1, "exportedAt": crate::util::now_ms(), "colls": colls, "texts": texts, "kv": kv })
@@ -192,12 +196,14 @@ impl Store {
                     for o in list { self.put_value(c, o); }
                 }
             }
-            let _ = self.conn.execute_batch("DELETE FROM texts; DELETE FROM kv; DELETE FROM fts;");
+            let _ = self.conn.execute_batch("DELETE FROM texts; DELETE FROM fts;");
+            let keep = MACHINE_KV.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(", ");
+            let _ = self.conn.execute_batch(&format!("DELETE FROM kv WHERE k NOT IN ({keep})"));
             if let Some(m) = b.get("texts").and_then(|x| x.as_object()) {
                 for (id, t) in m { if let Some(s) = t.as_str() { self.put_text(id, s); } }
             }
             if let Some(m) = b.get("kv").and_then(|x| x.as_object()) {
-                for (k, v) in m { self.kv_set(k, v); }
+                for (k, v) in m.iter().filter(|(k, _)| !MACHINE_KV.contains(&k.as_str())) { self.kv_set(k, v); }
             }
             // The search index is rebuilt from the restored topics.
             for t in self.all::<crate::types::Topic>("topics") {
@@ -209,5 +215,28 @@ impl Store {
 
     pub fn flush(&self) {
         let _ = self.conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE)");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backups_never_carry_mailbox_state() {
+        let dir = std::env::temp_dir().join(format!("is-store-{}", crate::util::uid()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = Store::open(&dir.join("t.sqlite")).unwrap();
+        st.kv_set("routinePending", &json!([{ "id": "3f2a9c1e7b4d" }]));
+        st.kv_set("jobSeq", &1.0);
+        let dump = st.dump();
+        assert!(dump["kv"].get("routinePending").is_none() && dump["kv"]["jobSeq"] == json!(1.0));
+        // A crafted backup's batch list is ignored and this Mac's own is kept.
+        let planted = json!({ "app": "interleaved-study", "colls": {}, "kv": { "routinePending": [{ "id": "../README.md#", "repo": "victim/project" }], "jobSeq": 2.0 } });
+        st.restore(&planted);
+        assert_eq!(st.kv_get::<Value>("routinePending"), Some(json!([{ "id": "3f2a9c1e7b4d" }])));
+        assert_eq!(st.kv_get::<f64>("jobSeq"), Some(2.0));
+        drop(st);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

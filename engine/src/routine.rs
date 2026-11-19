@@ -142,8 +142,36 @@ fn github_api(rs: &RoutineSettings) -> String {
     match url::Url::parse(o) { Ok(u) if local_host(&u) => o.to_string(), _ => "https://api.github.com".into() }
 }
 
+/// `owner/name` as GitHub spells it. A segment of only dots is refused: it would walk up the API path.
 pub fn repo_ok(repo: &str) -> bool {
-    crate::rx!(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$").is_match(repo.trim())
+    let r = repo.trim();
+    crate::rx!(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$").is_match(r) && r.split('/').all(|seg| !seg.chars().all(|c| c == '.'))
+}
+
+/// A batch id as `send_batch` makes it: 12 hex digits.
+fn batch_id_ok(id: &str) -> bool {
+    crate::rx!(r"^[0-9a-f]{12}$").is_match(id)
+}
+
+/// A request id as `request_id` makes it: 24 hex digits.
+fn request_id_ok(id: &str) -> bool {
+    crate::rx!(r"^[0-9a-f]{24}$").is_match(id)
+}
+
+impl Batch {
+    /// Whether a remembered batch may be acted on: every part that goes into a GitHub API path is what this app
+    /// itself would have written, and it belongs to the mailbox configured now. The list is read back from the
+    /// database, which a restored backup also writes, so it is checked rather than trusted: an id like
+    /// `../README.md#` would otherwise turn "delete the inbox file" into deleting any file in any repository the
+    /// GitHub sign-in can write.
+    pub fn trusted(&self, mailbox: &str, now: f64) -> bool {
+        batch_id_ok(&self.id)
+            && repo_ok(&self.repo)
+            && self.repo == mailbox.trim()
+            && self.reqs.iter().all(|r| request_id_ok(r))
+            && self.fired_at <= now + 60_000.0
+            && now - self.fired_at <= 6.0 * 3_600_000.0
+    }
 }
 
 /// A GitHub token: the one saved in Settings, else the GitHub CLI's (`gh auth token`).
@@ -627,10 +655,11 @@ async fn poll(app: AppRef, b: Batch) {
 
 /// After a restart: keep waiting for the batches that were already fired.
 pub fn resume(app: &AppRef) {
-    let list = app.lock().store.kv_get::<Vec<Batch>>("routinePending").unwrap_or_default();
+    let (list, mailbox) = { let c = app.lock(); (c.store.kv_get::<Vec<Batch>>("routinePending").unwrap_or_default(), c.settings.ai.routine.repo.clone()) };
     let now = now_ms();
     for b in list {
-        if now - b.fired_at > 6.0 * 3_600_000.0 { continue }
+        // Too old, or not a batch this app sent to the mailbox it uses now: dropped, never polled or tidied.
+        if !b.trusted(&mailbox, now) { continue }
         hub(app).inflight.insert(b.id.clone(), b.clone());
         tokio::spawn(poll(app.clone(), b));
     }
@@ -725,7 +754,23 @@ mod tests {
         assert!(fire_url_problem("https://evil.example/v1/claude_code/routines/trig_abc/fire").is_some());
         assert!(fire_url_problem("http://api.anthropic.com/v1/claude_code/routines/trig_abc/fire").is_some());
         assert!(fire_url_problem("http://127.0.0.1:8788/fire").is_none());
-        assert!(repo_ok("me/study-mailbox") && !repo_ok("just-a-name") && !repo_ok("a/b/c"));
+        assert!(repo_ok("me/study-mailbox") && repo_ok("me/.dotfiles") && !repo_ok("just-a-name") && !repo_ok("a/b/c"));
+        assert!(!repo_ok("../..") && !repo_ok("me/..") && !repo_ok("./x"));
+    }
+
+    #[test]
+    fn remembered_batches_are_checked() {
+        let now = 1_000_000_000_000.0;
+        let b = |id: &str, repo: &str, req: &str, at: f64| Batch { id: id.into(), repo: repo.into(), reqs: vec![req.into()], fired_at: at, url: None, files: false };
+        let req = request_id("s", "p");
+        assert!(b("3f2a9c1e7b4d", "me/box", &req, now - 1000.0).trusted(" me/box ", now));
+        // Planted by a crafted backup: walks out of inbox/ and drops the rest of the path as a fragment.
+        assert!(!b("../README.md#", "me/box", &req, now).trusted("me/box", now));
+        assert!(!b("3f2a9c1e7b4d", "victim/project", &req, now).trusted("me/box", now));
+        assert!(!b("3f2a9c1e7b4d", "../..", &req, now).trusted("../..", now));
+        assert!(!b("3f2a9c1e7b4d", "me/box", "../../x#", now).trusted("me/box", now));
+        assert!(!b("3f2a9c1e7b4d", "me/box", &req, now + 3_600_000.0).trusted("me/box", now));
+        assert!(!b("3f2a9c1e7b4d", "me/box", &req, now - 7.0 * 3_600_000.0).trusted("me/box", now));
     }
 
     #[test]
