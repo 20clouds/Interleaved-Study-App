@@ -108,9 +108,8 @@ struct AiSheetImport: View {
                 else { Text("You can still import this file by mapping its columns manually.").font(Typeset.small).foregroundStyle(Ink.ink2) }
             }
             if let res {
-                Text((res.converter == "markitdown" ? "Converted with markitdown" : "Converted with the built-in converter") + (res.chunks > 1 ? " and read in \(res.chunks) parts" : "") + ". Check the dates before importing; untick anything you don’t want. Deadlines you already have are unticked.")
+                Text("Converted the spreadsheet" + (res.chunks > 1 ? " and read in \(res.chunks) parts" : "") + ". Check the dates before importing; untick anything you don’t want. Deadlines you already have are unticked.")
                     .font(Typeset.small).foregroundStyle(Ink.ink2)
-                if let note = res.converterNote { Text(note).font(Typeset.small) }
                 if res.items.isEmpty {
                     Text("The AI found no dated items in this spreadsheet. Try mapping its columns manually.").foregroundStyle(Ink.ink2)
                 } else {

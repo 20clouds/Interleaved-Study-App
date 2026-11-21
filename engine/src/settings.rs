@@ -59,8 +59,7 @@ pub fn default_settings() -> Value {
         "pomo": { "work": 25, "brk": 5, "long": 15, "cycles": 4, "perTopic": "one", "n": 3, "minutes": 40, "autoStartNext": false },
         "notify": { "sound": "Glass", "bounce": true, "badge": true },
         "goal": { "kind": "minutes", "value": 60, "restDaysPerWeek": 1 },
-        "theme": "system",
-        "tools": { "markitdown": "" }
+        "theme": "system"
     })
 }
 
@@ -136,6 +135,8 @@ pub fn merge_settings(stored: Option<&Value>) -> Value {
     ai.insert("defaultsRev".into(), json!(DEFAULTS_REV));
     for k in ["rpm", "tpm", "rpd", "utilization", "countInputOnly"] { ai.remove(k); }
     if !PROVIDERS.contains(&ai.get("provider").and_then(|x| x.as_str()).unwrap_or("")) { ai.insert("provider".into(), json!("gemini")); }
+    // A path to an external converter, never used: settings and backups from before carry it, and it is dropped.
+    if let Some(o) = out.as_object_mut() { o.remove("tools"); }
     out
 }
 
@@ -222,16 +223,12 @@ pub struct PomoSettings { pub work: f64, pub brk: f64, pub long: f64, pub cycles
 pub struct NotifySettings { pub sound: String, pub bounce: bool, pub badge: bool }
 
 #[derive(Deserialize, Clone, Debug)]
-pub struct ToolSettings { pub markitdown: String }
-
-#[derive(Deserialize, Clone, Debug)]
 pub struct Settings {
     pub ai: AiSettings,
     pub study: StudySettings,
     pub pomo: PomoSettings,
     pub notify: NotifySettings,
     pub theme: String,
-    pub tools: ToolSettings,
 }
 
 /// The typed view of merged settings. Values of the wrong type (a damaged file) fall back to the defaults.

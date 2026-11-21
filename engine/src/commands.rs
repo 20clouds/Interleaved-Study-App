@@ -399,7 +399,7 @@ pub async fn dispatch(app: &AppRef, method: &str, a: Vec<Value>) -> Result<Value
                 (c.create_job(NewJob { kind: "deadlines", doc_id: None, topic_id: None, label: format!("Find deadlines in \"{name}\""), est_tokens: (markdown.len() as f64 / 4.0).ceil() + n as f64 * 450.0, payload: json!({ "chunks": chunks, "today": today(), "courses": courses }) }), n)
             };
             let res = wait_job(app, job).await?;
-            Ok(json!({ "path": file, "converter": "builtin", "converterNote": null, "items": res["items"], "dropped": res["dropped"], "chunks": n }))
+            Ok(json!({ "path": file, "items": res["items"], "dropped": res["dropped"], "chunks": n }))
         }
         "importDeadlines" => {
             let items: Vec<DeadlineInput> = parse(a, 0, "deadlines")?;
@@ -434,7 +434,7 @@ pub async fn dispatch(app: &AppRef, method: &str, a: Vec<Value>) -> Result<Value
                 // Keep a safety copy of the current data next to the store
                 let _ = std::fs::write(app.data_dir.join(format!("before-restore-{}.json", now_ms() as i64)), c.store.dump().to_string());
                 // Where keys are sent is this machine's choice, never a backup's.
-                let keep = json!({ "ai": { "baseUrls": c.settings_raw["ai"]["baseUrls"], "routine": c.settings_raw["ai"]["routine"] }, "tools": c.settings_raw["tools"] });
+                let keep = json!({ "ai": { "baseUrls": c.settings_raw["ai"]["baseUrls"], "routine": c.settings_raw["ai"]["routine"] } });
                 c.store.restore(&data);
                 c.settings_raw = merge_settings(Some(&deep_merge(&c.store.kv_get::<Value>("settings").unwrap_or(json!({})), &keep)));
                 c.save_settings();

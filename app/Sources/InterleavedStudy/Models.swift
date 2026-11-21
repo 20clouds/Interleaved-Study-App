@@ -389,8 +389,6 @@ struct ExtractedDeadline: Codable, Hashable {
 
 struct DeadlineExtract: Codable {
     var path: String
-    var converter: String
-    var converterNote: String?
     var items: [ExtractedDeadline]
     var dropped: Int
     var chunks: Int
