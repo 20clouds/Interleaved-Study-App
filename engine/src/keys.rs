@@ -5,11 +5,15 @@ use std::collections::HashMap;
 const SERVICE: &str = "Interleaved Study";
 const ACCOUNT: &str = "api-keys";
 
-/// For development and tests only: `INTERLEAVED_STUDY_KEYS='{"gemini":"…"}'` supplies the secrets and the Keychain
-/// is left alone.
+/// Debug builds only: `INTERLEAVED_STUDY_KEYS='{"gemini":"…"}'` supplies the secrets and the Keychain is left alone.
+/// A release build never reads it, so a stray or planted environment variable cannot replace the stored keys.
+#[cfg(debug_assertions)]
 fn dev_override() -> Option<HashMap<String, String>> {
     serde_json::from_str(&std::env::var("INTERLEAVED_STUDY_KEYS").ok()?).ok()
 }
+
+#[cfg(not(debug_assertions))]
+fn dev_override() -> Option<HashMap<String, String>> { None }
 
 pub fn load() -> HashMap<String, String> {
     if let Some(m) = dev_override() { return m }
