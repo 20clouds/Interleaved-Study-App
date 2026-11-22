@@ -23,14 +23,18 @@ fn ext_of(p: &Path) -> String {
 
 pub fn walk(paths: &[String], max_depth: usize) -> Vec<PathBuf> {
     fn visit(p: &Path, depth: usize, max: usize, out: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>) {
-        let Ok(md) = std::fs::metadata(p) else { return };
+        // What the person chose may itself be a link. Links inside a chosen folder are never followed: one could
+        // reach files outside it (a shared course folder linking to ~/Documents) or loop back on itself and
+        // multiply the walk without end.
+        let md = if depth == 0 { std::fs::metadata(p) } else { std::fs::symlink_metadata(p) };
+        let Ok(md) = md else { return };
         if md.is_dir() {
             if depth > max { return }
             let Ok(rd) = std::fs::read_dir(p) else { return };
             let mut names: Vec<String> = rd.flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| !n.starts_with('.') && n != "node_modules").collect();
             names.sort_by(|a, b| natural_cmp(a, b));
             for n in names { visit(&p.join(n), depth + 1, max, out, seen); }
-        } else {
+        } else if md.is_file() {
             // Pictures are taken only when chosen one by one, never swept up from a folder of course material.
             let ext = ext_of(p);
             let ok = ALL_EXT.contains(&ext.as_str()) || (depth == 0 && crate::files::is_image(&ext));
