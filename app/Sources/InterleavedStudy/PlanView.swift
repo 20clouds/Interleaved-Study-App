@@ -8,6 +8,8 @@ struct PlanView: View {
     @State private var sheet: SheetData?
     @State private var manual = false
     @State private var showPast = false
+    /// The deadlines ticked for deleting while editing the list; nil when not editing.
+    @State private var picked: Set<String>?
 
     var body: some View {
         if let d = app.data, let settings = app.settings {
@@ -67,6 +69,17 @@ struct PlanView: View {
             HStack(spacing: 12) {
                 Text("Deadlines").font(Typeset.heading)
                 Spacer()
+                if let p = picked {
+                    Button(p.count == list.count ? "Deselect All" : "Select All") { picked = p.count == list.count ? [] : Set(list.map(\.id)) }.buttonStyle(.secondary)
+                    Button("Delete \(p.count)", role: .destructive) {
+                        app.confirmThen("Delete \(plural(p.count, "deadline"))?", detail: "Topics are not affected.", ok: "Delete", danger: true) {
+                            for id in p { try await Engine.run("deleteDeadline", id) }
+                            picked = nil
+                        }
+                    }
+                    .buttonStyle(.secondary).disabled(p.isEmpty)
+                }
+                Button(picked == nil ? "Edit" : "Done") { picked = picked == nil ? [] : nil }.buttonStyle(.secondary).disabled(list.isEmpty && picked == nil)
                 Button { Task { if let s: SheetData? = await app.act({ try await Engine.call("openSheet") }), let s { manual = false; sheet = s } } } label: {
                     Label("Import .xlsx or .csv", systemImage: "square.and.arrow.down")
                 }
@@ -77,10 +90,14 @@ struct PlanView: View {
                 Text("No upcoming deadlines. Linked deadlines give their topics priority as the date approaches (from three weeks out).").foregroundStyle(Ink.ink2)
             } else {
                 ScrollView {
-                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+                    Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
                         ForEach(list) { dl in
                             let n = Days.between(today, dl.date)
                             GridRow {
+                                if picked != nil {
+                                    Toggle("", isOn: Binding(get: { picked?.contains(dl.id) ?? false }, set: { on in if on { picked?.insert(dl.id) } else { picked?.remove(dl.id) } }))
+                                        .toggleStyle(.check).labelsHidden()
+                                }
                                 Text(Days.date(dl.date).formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())).monospacedDigit().foregroundStyle(Ink.ink2)
                                 HStack(spacing: 6) {
                                     Dot(color: app.courseOf(dl).map { app.color($0.id) } ?? Ink.ink3, size: 7)
@@ -88,13 +105,13 @@ struct PlanView: View {
                                     if let l = link(dl) { Text("(\(l))").font(Typeset.small).foregroundStyle(Ink.ink2) }
                                 }
                                 Text(Days.countdown(dl.date)).font(Typeset.small.monospacedDigit()).foregroundStyle(n <= 7 && n >= 0 ? Ink.due : Ink.ink2)
-                                HStack(spacing: 8) {
+                                if picked == nil { HStack(spacing: 8) {
                                     Button { form = .edit(dl) } label: { Image(systemName: "pencil") }.help("Edit")
                                     Button {
                                         app.confirmThen("Delete “\(dl.title)”?", detail: "The deadline is removed; topics are not affected.", ok: "Delete", danger: true) { try await Engine.run("deleteDeadline", dl.id) }
                                     } label: { Image(systemName: "trash") }.help("Delete")
                                 }
-                                .buttonStyle(.quiet)
+                                .buttonStyle(.quiet) }
                             }
                         }
                     }

@@ -318,7 +318,6 @@ struct LibraryPrefs: Codable, Equatable {
     var density: Density = .roomy
     var topicSize: Double = 13.5
     var counts = true
-    var deck = true
     var inspector = true
     var columns = TableColumnCustomization<LibraryRow>()
     /// Lessons opened in the list (closed until opened) and units folded shut.

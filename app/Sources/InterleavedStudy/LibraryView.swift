@@ -224,26 +224,26 @@ struct LibraryView: View {
             case .unit: EmptyView()
             }
         }
-            .width(min: 80, ideal: 150)
+            .width(128)
             .customizationID("status")
         TableColumn("Time") { row in if case .topic(let t) = row { Text("\(Int(t.minutes))m").monospacedDigit() } }
-            .width(min: 40, ideal: 48)
+            .width(44)
             .alignment(.trailing)
             .customizationID("time")
         TableColumn("Spent") { row in if case .topic(let t) = row, t.spent > 0 { Text(fmtMin(t.spent)).monospacedDigit().foregroundStyle(.secondary) } }
-            .width(min: 44, ideal: 56)
+            .width(56)
             .alignment(.trailing)
             .customizationID("spent")
         TableColumn("Last") { row in if case .topic(let t) = row { Text(fmtRel(t.last, app.now)).monospacedDigit().foregroundStyle(.secondary) } }
-            .width(min: 50, ideal: 64)
+            .width(64)
             .alignment(.trailing)
             .customizationID("last")
         TableColumn("Next due") { row in if case .topic(let t) = row { Text(fmtRel(t.due, app.now)).monospacedDigit().foregroundStyle(t.isDue(app.now) ? Ink.due : .primary) } }
-            .width(min: 60, ideal: 76)
+            .width(68)
             .alignment(.trailing)
             .customizationID("due")
         TableColumn("Mastery") { row in MasteryCell(row: row).environment(app) }
-            .width(min: 96, ideal: 104)
+            .width(92)
             .customizationID("mastery")
     }
 
@@ -348,7 +348,6 @@ struct LibraryView: View {
                 }
                 Divider()
                 Toggle("Topic Counts on Lessons", isOn: Binding(get: { app.library.counts }, set: { app.library.counts = $0 }))
-                Toggle("Lecture File Next to Topics", isOn: Binding(get: { app.library.deck }, set: { app.library.deck = $0 }))
                 Divider()
                 Text("Right-click a column heading to show or hide columns.")
             } label: {
@@ -384,17 +383,14 @@ private struct NameCell: View {
             HStack(spacing: 8) {
                 Text(name).font(.system(size: app.library.topicSize, weight: .medium)).foregroundStyle(.secondary)
                 if app.library.counts { Text("\(count)").font(Typeset.small.monospacedDigit()).foregroundStyle(.tertiary) }
-            }
+            }.fixedSize()
         case .topic(let t):
-            HStack(spacing: 10) {
-                Text(t.name)
-                    .font(Typeset.serif(app.library.topicSize))
-                    .italic(t.provisional)
-                    .foregroundStyle(t.provisional ? HierarchicalShapeStyle.secondary : .primary)
-                    .lineLimit(1)
-                    .help(t.provisional ? "Provisional name until the AI organizes this lesson" : t.name)
-                if app.library.deck { DeckLabel(doc: app.docs[t.docId]) }
-            }
+            Text(t.name)
+                .font(Typeset.serif(app.library.topicSize))
+                .italic(t.provisional)
+                .foregroundStyle(t.provisional ? HierarchicalShapeStyle.secondary : .primary)
+                .lineLimit(1)
+                .help(t.provisional ? "Provisional name until the AI organizes this lesson" : t.name)
         }
     }
 }

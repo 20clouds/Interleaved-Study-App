@@ -127,8 +127,9 @@ enum Host {
     }
 
     @MainActor private static func sheet(_ p: NSSavePanel, done: @escaping (Bool) -> Void) {
-        if let w = NSApp.mainWindow ?? NSApp.keyWindow {
-            p.beginSheetModal(for: w) { done($0 == .OK) }
+        // On the sheet open in the window, if any: a window's second sheet waits until its first one closes.
+        if let w = NSApp.keyWindow ?? NSApp.mainWindow {
+            p.beginSheetModal(for: w.attachedSheet ?? w) { done($0 == .OK) }
         } else {
             done(p.runModal() == .OK)
         }

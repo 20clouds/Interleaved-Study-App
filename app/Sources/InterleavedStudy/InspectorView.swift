@@ -54,6 +54,7 @@ private struct TopicDetail: View {
                     Text([app.courses[t.courseId]?.name, d?.title, t.unit != d?.title && !t.unit.isEmpty ? t.unit : nil].compactMap { $0 }.joined(separator: " / "))
                         .font(Typeset.small).foregroundStyle(Ink.ink2).lineLimit(1)
                     Text(t.name).font(Typeset.serif(20, weight: .medium)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    DeckLabel(doc: d)
                     if t.provisional { Text("Provisional name until the AI organizes this lesson.").font(Typeset.small).foregroundStyle(Ink.ink2) }
                 }
                 VStack(alignment: .leading, spacing: 8) {
@@ -372,6 +373,11 @@ struct NewCourseSheet: View {
                     .keyboardShortcut(.defaultAction).buttonStyle(.primary)
                     .disabled(busy)
             }
+        }
+        // A sheet is its own window, so the main window's drop target does not reach it.
+        .dropDestination(for: URL.self) { urls, _ in
+            app.importer.drop(urls.filter(\.isFileURL).map(\.path), app: app)
+            return true
         }
     }
 
