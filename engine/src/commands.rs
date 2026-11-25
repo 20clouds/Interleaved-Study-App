@@ -370,7 +370,7 @@ pub async fn dispatch(app: &AppRef, method: &str, a: Vec<Value>) -> Result<Value
             c.emit_data();
             DONE
         }
-        "deleteDeadline" => { let c = app.lock(); c.store.del("deadlines", &s(a, 0)); c.emit_data(); DONE }
+        "deleteDeadlines" => { let c = app.lock(); c.store.tx(|| for id in strs(a, 0) { c.store.del("deadlines", &id) }); c.emit_data(); DONE }
         "openSheet" => {
             let Some(file) = pick(Pick::Sheet).await.into_iter().next() else { return DONE };
             let f2 = file.clone();

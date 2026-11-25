@@ -70,14 +70,16 @@ struct PlanView: View {
                 Text("Deadlines").font(Typeset.heading)
                 Spacer()
                 if let p = picked {
-                    Button(p.count == list.count ? "Deselect All" : "Select All") { picked = p.count == list.count ? [] : Set(list.map(\.id)) }.buttonStyle(.secondary)
-                    Button("Delete \(p.count)", role: .destructive) {
-                        app.confirmThen("Delete \(plural(p.count, "deadline"))?", detail: "Topics are not affected.", ok: "Delete", danger: true) {
-                            for id in p { try await Engine.run("deleteDeadline", id) }
+                    // Only ticks on rows still shown count: hiding past deadlines must not leave them set to be deleted.
+                    let shown = Set(list.map(\.id)), sel = p.intersection(shown)
+                    Button(sel == shown ? "Deselect All" : "Select All") { picked = sel == shown ? [] : shown }.buttonStyle(.secondary)
+                    Button("Delete \(sel.count)", role: .destructive) {
+                        app.confirmThen("Delete \(plural(sel.count, "deadline"))?", detail: "Topics are not affected.", ok: "Delete", danger: true) {
+                            try await Engine.run("deleteDeadlines", Array(sel))
                             picked = nil
                         }
                     }
-                    .buttonStyle(.secondary).disabled(p.isEmpty)
+                    .buttonStyle(.secondary).disabled(sel.isEmpty)
                 }
                 Button(picked == nil ? "Edit" : "Done") { picked = picked == nil ? [] : nil }.buttonStyle(.secondary).disabled(list.isEmpty && picked == nil)
                 Button { Task { if let s: SheetData? = await app.act({ try await Engine.call("openSheet") }), let s { manual = false; sheet = s } } } label: {
@@ -108,7 +110,7 @@ struct PlanView: View {
                                 if picked == nil { HStack(spacing: 8) {
                                     Button { form = .edit(dl) } label: { Image(systemName: "pencil") }.help("Edit")
                                     Button {
-                                        app.confirmThen("Delete “\(dl.title)”?", detail: "The deadline is removed; topics are not affected.", ok: "Delete", danger: true) { try await Engine.run("deleteDeadline", dl.id) }
+                                        app.confirmThen("Delete “\(dl.title)”?", detail: "The deadline is removed; topics are not affected.", ok: "Delete", danger: true) { try await Engine.run("deleteDeadlines", [dl.id]) }
                                     } label: { Image(systemName: "trash") }.help("Delete")
                                 }
                                 .buttonStyle(.quiet) }
