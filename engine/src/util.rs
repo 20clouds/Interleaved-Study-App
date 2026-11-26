@@ -1,5 +1,5 @@
 // Small helpers used across the core: time, day keys, word counts, names, natural ordering.
-use chrono::{Datelike, Duration, Local, NaiveDate, TimeZone};
+use jiff::{civil::Date, tz::TimeZone, Timestamp, ToSpan, ZonedDateTime};
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
@@ -19,26 +19,27 @@ pub fn sha256(s: &str) -> String {
     hex::encode(Sha256::digest(s.as_bytes()))
 }
 
+fn local(t: f64) -> Option<ZonedDateTime> {
+    Timestamp::from_millisecond(t as i64).ok().map(|ts| ts.to_zoned_datetime(TimeZone::system()))
+}
+
+fn ms(z: &ZonedDateTime) -> f64 {
+    z.timestamp().as_millisecond() as f64
+}
+
 /// Local calendar day "YYYY-MM-DD" for a timestamp.
 pub fn day_key(t: f64) -> String {
-    match Local.timestamp_millis_opt(t as i64).single() {
-        Some(d) => d.format("%Y-%m-%d").to_string(),
-        None => "1970-01-01".into(),
-    }
+    local(t).map_or_else(|| "1970-01-01".into(), |z| z.date().to_string())
 }
 
 pub fn today() -> String {
     day_key(now_ms())
 }
 
-/// Local midnight of a day key, in ms.
+/// The start of a day key's local day, in ms: midnight, or the first moment after it when a clock change skips midnight.
 pub fn parse_day_key(k: &str) -> f64 {
-    let d = NaiveDate::parse_from_str(k, "%Y-%m-%d").unwrap_or_else(|_| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap());
-    let dt = d.and_hms_opt(0, 0, 0).unwrap();
-    match Local.from_local_datetime(&dt).earliest() {
-        Some(x) => x.timestamp_millis() as f64,
-        None => 0.0,
-    }
+    let d = Date::strptime("%Y-%m-%d", k).unwrap_or(Date::constant(1970, 1, 1));
+    d.to_zoned_datetime(TimeZone::system()).map_or(0.0, |z| ms(&z))
 }
 
 /// Adds time to a timestamp. Months follow the calendar (Jan 31 + 1 month = Feb 28/29).
@@ -47,18 +48,7 @@ pub fn add_time(t: f64, amount: f64, unit: &str) -> f64 {
         "minutes" => t + amount * 60_000.0,
         "hours" => t + amount * 3_600_000.0,
         "days" => t + amount * DAY,
-        _ => {
-            let Some(d) = Local.timestamp_millis_opt(t as i64).single() else { return t };
-            let months = amount.round() as i32;
-            let total = d.year() * 12 + d.month0() as i32 + months;
-            let (y, m0) = (total.div_euclid(12), total.rem_euclid(12) as u32);
-            let first = NaiveDate::from_ymd_opt(y, m0 + 1, 1).unwrap();
-            let next = if m0 == 11 { NaiveDate::from_ymd_opt(y + 1, 1, 1) } else { NaiveDate::from_ymd_opt(y, m0 + 2, 1) }.unwrap();
-            let last = (next - Duration::days(1)).day();
-            let date = first.with_day(d.day().min(last)).unwrap();
-            let naive = date.and_time(d.time());
-            Local.from_local_datetime(&naive).earliest().map(|x| x.timestamp_millis() as f64).unwrap_or(t)
-        }
+        _ => local(t).and_then(|z| z.checked_add((amount.round() as i64).months()).ok()).map_or(t, |z| ms(&z)),
     }
 }
 

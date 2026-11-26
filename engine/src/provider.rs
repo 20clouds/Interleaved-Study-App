@@ -73,7 +73,7 @@ pub fn parse_retry_after(header: Option<&str>, body: &str, now: f64) -> Option<f
     let cap = |ms: f64| ms.clamp(0.0, MAX_RESET_HINT_MS);
     if let Some(h) = header.map(|h| h.trim()).filter(|h| !h.is_empty()) {
         if let Ok(n) = h.parse::<f64>() { if n.is_finite() { return Some(cap(n * 1000.0)) } }
-        if let Ok(t) = chrono::DateTime::parse_from_rfc2822(h) { return Some(cap(t.timestamp_millis() as f64 - now)) }
+        if let Ok(t) = jiff::fmt::rfc2822::parse(h) { return Some(cap(t.timestamp().as_millisecond() as f64 - now)) }
     }
     if let Some(m) = rx!(r#""retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s""#).captures(body) {
         return m[1].parse::<f64>().ok().map(|s| cap((s * 1000.0).round()));
@@ -583,6 +583,7 @@ mod tests {
     #[test]
     fn retry_after_forms() {
         assert_eq!(parse_retry_after(Some("12"), "", 0.0), Some(12000.0));
+        assert_eq!(parse_retry_after(Some("Wed, 21 Oct 2015 07:28:00 GMT"), "", 1_445_412_475_000.0), Some(5000.0));
         assert_eq!(parse_retry_after(None, r#"{"retryDelay": "17s"}"#, 0.0), Some(17000.0));
         assert_eq!(parse_retry_after(None, "Please retry in 1h2m3.5s.", 0.0), Some(3_723_500.0));
         assert_eq!(parse_retry_after(None, "nothing", 0.0), None);

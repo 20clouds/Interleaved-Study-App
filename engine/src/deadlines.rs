@@ -128,7 +128,7 @@ pub fn chunk_markdown(md: &str, max_rows: usize, max_chars: usize) -> Vec<String
 }
 
 fn real_date(s: &str) -> bool {
-    s.len() == 10 && rx!(r"^\d{4}-\d{2}-\d{2}$").is_match(s) && chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok()
+    s.len() == 10 && rx!(r"^\d{4}-\d{2}-\d{2}$").is_match(s) && jiff::civil::Date::strptime("%Y-%m-%d", s).is_ok()
 }
 
 fn clean(v: Option<&Value>) -> String {
@@ -173,8 +173,8 @@ pub fn merge_extracted(parts: Vec<Extracted>) -> Extracted {
 
 fn serial_to_iso(n: f64) -> Option<String> {
     if !n.is_finite() || !(1.0..=2_958_465.0).contains(&n) { return None }
-    let base = chrono::NaiveDate::from_ymd_opt(1899, 12, 30)?;
-    Some((base + chrono::Duration::days(n.floor() as i64)).format("%Y-%m-%d").to_string())
+    use jiff::ToSpan;
+    jiff::civil::Date::constant(1899, 12, 30).checked_add((n.floor() as i64).days()).ok().map(|d| d.to_string())
 }
 
 /// Spreadsheet limits. A course calendar is a few hundred rows; these only stop a hostile file from taking the app
