@@ -10,9 +10,7 @@ struct InterleavedStudyApp: App {
     @State private var app: AppModel
 
     init() {
-        let env = ProcessInfo.processInfo.environment["INTERLEAVED_STUDY_DATA"].flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
-        let dir = env.map { URL(fileURLWithPath: $0) }
-            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Interleaved Study 2")
+        let dir = Self.libraryFolder()
         if !Engine.start(dataDir: dir) {
             let a = NSAlert()
             a.messageText = "Interleaved Study could not open its library."
@@ -26,6 +24,18 @@ struct InterleavedStudyApp: App {
         #if DEBUG
         Snapshots.run(model)
         #endif
+    }
+
+    /// The library in Application Support. Only a debug build may take another from INTERLEAVED_STUDY_DATA: a library
+    /// planted through the environment could name any https address for the AI, and the app would send it the
+    /// Keychain's keys without asking.
+    private static func libraryFolder() -> URL {
+        #if DEBUG
+        if let env = ProcessInfo.processInfo.environment["INTERLEAVED_STUDY_DATA"], !env.trimmingCharacters(in: .whitespaces).isEmpty {
+            return URL(fileURLWithPath: env)
+        }
+        #endif
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Interleaved Study 2")
     }
 
     var body: some Scene {

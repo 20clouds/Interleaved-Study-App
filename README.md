@@ -168,7 +168,7 @@ scripts/             build-app.sh, and the mock AI and mock scheduled-task serve
 
 | Variable | Effect |
 | --- | --- |
-| `INTERLEAVED_STUDY_DATA=<folder>` | Use this folder for the library instead of Application Support |
+| `INTERLEAVED_STUDY_DATA=<folder>` | Debug builds only: use this folder for the library instead of Application Support |
 | `INTERLEAVED_STUDY_KEYS='{"gemini":"test-key"}'` | Debug builds only: supply keys from the environment; the Keychain is not touched |
 | `INTERLEAVED_STUDY_DEV_PORT=5184` | Debug builds only: serve the API and events on this loopback port |
 
