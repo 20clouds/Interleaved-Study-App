@@ -124,10 +124,14 @@ pub extern "C" fn is_call(method: *const c_char, args_json: *const c_char, ctx: 
     let Some(e) = ENGINE.get() else { return answer(false, json!("The engine is not running.")) };
     let args: Vec<Value> = serde_json::from_str(&args).unwrap_or_default();
     let app = e.app.clone();
+    // The call runs in its own task so that a panic inside it still gets an answer: without one, the app's await
+    // would never return.
+    let call = e.rt.spawn(async move { commands::dispatch(&app, &method, args).await });
     e.rt.spawn(async move {
-        match commands::dispatch(&app, &method, args).await {
-            Ok(v) => answer(true, v),
-            Err(err) => answer(false, json!(err)),
+        match call.await {
+            Ok(Ok(v)) => answer(true, v),
+            Ok(Err(err)) => answer(false, json!(err)),
+            Err(_) => answer(false, json!("The engine hit an internal error.")),
         }
     });
 }
