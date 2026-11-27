@@ -1,5 +1,5 @@
 // Small helpers used across the core: time, day keys, word counts, names, natural ordering.
-use jiff::{civil::Date, tz::TimeZone, Timestamp, ToSpan, ZonedDateTime};
+use jiff::{civil::Date, tz::TimeZone, Span, Timestamp, ZonedDateTime};
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
@@ -48,7 +48,8 @@ pub fn add_time(t: f64, amount: f64, unit: &str) -> f64 {
         "minutes" => t + amount * 60_000.0,
         "hours" => t + amount * 3_600_000.0,
         "days" => t + amount * DAY,
-        _ => local(t).and_then(|z| z.checked_add((amount.round() as i64).months()).ok()).map_or(t, |z| ms(&z)),
+        // try_months, not months(): a count past jiff's limit (about 20,000 years) is refused instead of panicking.
+        _ => local(t).and_then(|z| z.checked_add(Span::new().try_months(amount.round() as i64).ok()?).ok()).map_or(t, |z| ms(&z)),
     }
 }
 
@@ -212,5 +213,7 @@ mod tests {
         let jan31 = parse_day_key("2026-01-31");
         assert_eq!(day_key(add_time(jan31, 1.0, "months")), "2026-02-28");
         assert_eq!(day_key(add_time(jan31, 1.0, "days")), "2026-02-01");
+        // Past jiff's month limit the time is left as it was rather than panicking.
+        for n in [1e9, -1e9, f64::INFINITY, f64::NAN] { assert_eq!(add_time(jan31, n, "months"), jan31) }
     }
 }
