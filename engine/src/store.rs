@@ -159,15 +159,21 @@ impl Store {
         self.rows("SELECT id FROM fts WHERE fts MATCH ?1 ORDER BY rank LIMIT ?2", params![toks.join(" "), limit as i64])
     }
 
-    /// Run `f` in one transaction (nested calls join the outer one).
+    /// Run `f` in one transaction (nested calls join the outer one). If `f` panics, its writes are rolled back and
+    /// the store leaves the transaction: the engine answers that call with an error and keeps running, and every
+    /// later write would otherwise join a transaction that is never committed and be lost when the app quits.
     pub fn tx<R>(&self, f: impl FnOnce() -> R) -> R {
+        struct End<'a> { store: &'a Store, began: bool }
+        impl Drop for End<'_> {
+            fn drop(&mut self) {
+                self.store.depth.set(0);
+                if self.began { let _ = self.store.conn.execute_batch(if std::thread::panicking() { "ROLLBACK" } else { "COMMIT" }); }
+            }
+        }
         if self.depth.get() > 0 { return f() }
-        let began = self.conn.execute_batch("BEGIN").is_ok();
+        let _end = End { store: self, began: self.conn.execute_batch("BEGIN").is_ok() };
         self.depth.set(1);
-        let r = f();
-        self.depth.set(0);
-        if began { let _ = self.conn.execute_batch("COMMIT"); }
-        r
+        f()
     }
 
     pub fn dump(&self) -> Value {
@@ -237,6 +243,28 @@ mod tests {
         assert_eq!(st.kv_get::<Value>("routinePending"), Some(json!([{ "id": "3f2a9c1e7b4d" }])));
         assert_eq!(st.kv_get::<f64>("jobSeq"), Some(2.0));
         drop(st);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_panic_inside_a_transaction_leaves_later_writes_saved() {
+        let dir = std::env::temp_dir().join(format!("is-store-{}", crate::util::uid()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("t.sqlite");
+        let st = Store::open(&file).unwrap();
+        let hit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| st.tx(|| {
+            st.kv_set("half", &1.0);
+            panic!("boom");
+        })));
+        assert!(hit.is_err());
+        st.kv_set("after", &2.0);
+        st.tx(|| st.kv_set("nested", &3.0));
+        // Another connection sees only what was committed.
+        let other = Store::open(&file).unwrap();
+        assert_eq!(other.kv_get::<f64>("half"), None);
+        assert_eq!(other.kv_get::<f64>("after"), Some(2.0));
+        assert_eq!(other.kv_get::<f64>("nested"), Some(3.0));
+        drop((st, other));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
